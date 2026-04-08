@@ -553,7 +553,8 @@ h1 {
 
 .browseCardItem.suspended {
   background-color: #e8e8e8;
-  opacity: 0.7;
+  border-style: dashed;
+  opacity: 0.6;
 }
 
 .browseCardHeader {
@@ -743,6 +744,7 @@ h1 {
 .browseHeaderTop .browseStats {
   display: table-cell;
   vertical-align: middle;
+  width: 100%;
 }
 
 .browseHeaderTop button {
@@ -752,7 +754,6 @@ h1 {
   padding: 5px 10px;
   border: 1px solid #000;
   cursor: pointer;
-  float: right;
 }
 
 .browseLevelFilter {
@@ -798,11 +799,6 @@ h1 {
 
 .browseCardTags {
   margin-top: 5px;
-}
-
-.browseCardItem.suspended {
-  border-style: dashed;
-  opacity: 0.6;
 }
 
 /* Responsive adjustments for browse screen */
