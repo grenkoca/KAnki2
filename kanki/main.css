@@ -718,6 +718,17 @@ h1 {
   width: 40%;
 }
 
+.overviewLevelName a {
+  color: #0066cc;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.overviewLevelName a:hover {
+  color: #004499;
+  text-decoration: none;
+}
+
 .overviewLevelStats {
   color: #444;
 }

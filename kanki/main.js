@@ -239,14 +239,17 @@ function createDefaultDeck() {
       if (VOCABULARY.hasOwnProperty(level)) {
         for (var i = 0; i < VOCABULARY[level].length; i++) {
           var word = VOCABULARY[level][i];
-          deck.cards.push(createCard(
-            word.front, 
+          var card = createCard(
+            word.front,
             word.reading,
-            word.back, 
-            word.notes, 
-            level, 
+            word.back,
+            word.notes,
+            level,
             0
-          ));
+          );
+          if (word.tags && word.tags.length)  card.tags      = word.tags.slice();
+          if (word.suspended)                  card.suspended = true;
+          deck.cards.push(card);
         }
       }
     }
@@ -531,6 +534,9 @@ function displayCurrentCard(showAnswer) {
   
   notesElement.textContent = card.notes || "";
   
+  // Apply automatic text scaling
+  applyTextScaling(frontElement, backElement, notesElement);
+  
   starButton.style.display = "block";
   updateStarButton(card.starred);
 
@@ -560,6 +566,93 @@ function displayCurrentCard(showAnswer) {
   }
   
   updateProgressDisplay();
+}
+
+// Apply automatic text scaling based on content length
+function applyTextScaling(frontElement, backElement, notesElement) {
+  var cardContainer = document.getElementById("cardContainer");
+  if (!cardContainer || !frontElement || !backElement) return;
+  
+  // Get available space (card height minus padding and other elements)
+  var cardHeight = cardContainer.clientHeight;
+  var availableHeight = cardHeight - 100; // Reserve space for level badge, stats, etc.
+  
+  // Get text lengths
+  var frontText = frontElement.textContent || frontElement.innerHTML;
+  var backText = backElement.textContent || backElement.innerHTML;
+  var notesText = notesElement.textContent || notesElement;
+  
+  // Calculate character counts
+  var frontLength = frontText ? frontText.length : 0;
+  var backLength = backText ? backText.length : 0;
+  var notesLength = notesText ? notesText.length : 0;
+  
+  var maxLength = Math.max(frontLength, backLength);
+  var totalLength = frontLength + backLength + notesLength;
+  
+  // Base font sizes (in em)
+  var baseFrontSize = 2.0;
+  var baseBackSize = 1.5;
+  var baseNotesSize = 0.9;
+  
+  // Scaling thresholds (characters)
+  var shortText = 50;
+  var mediumText = 200;
+  var longText = 500;
+  var veryLongText = 1000;
+  
+  // Calculate scaling factors based on text length
+  var frontScale = 1.0;
+  var backScale = 1.0;
+  var notesScale = 1.0;
+  
+  if (maxLength <= shortText) {
+    // Short text - use base size
+    frontScale = 1.0;
+    backScale = 1.0;
+  } else if (maxLength <= mediumText) {
+    // Medium text - slight reduction
+    frontScale = 0.85;
+    backScale = 0.85;
+  } else if (maxLength <= longText) {
+    // Long text - moderate reduction
+    frontScale = 0.7;
+    backScale = 0.7;
+  } else if (maxLength <= veryLongText) {
+    // Very long text - significant reduction
+    frontScale = 0.55;
+    backScale = 0.55;
+  } else {
+    // Extremely long text - maximum reduction
+    frontScale = 0.45;
+    backScale = 0.45;
+  }
+  
+  // Additional scaling based on total content
+  if (totalLength > veryLongText * 1.5) {
+    frontScale *= 0.85;
+    backScale *= 0.85;
+  } else if (totalLength > veryLongText) {
+    frontScale *= 0.9;
+    backScale *= 0.9;
+  }
+  
+  // Apply scaling with minimum bounds
+  var minFrontSize = 0.8;
+  var minBackSize = 0.6;
+  var minNotesSize = 0.6;
+  
+  frontScale = Math.max(minFrontSize / baseFrontSize, frontScale);
+  backScale = Math.max(minBackSize / baseBackSize, backScale);
+  notesScale = Math.max(minNotesSize / baseNotesSize, notesScale);
+  
+  // Apply the calculated font sizes
+  frontElement.style.fontSize = (baseFrontSize * frontScale) + "em";
+  backElement.style.fontSize = (baseBackSize * backScale) + "em";
+  notesElement.style.fontSize = (baseNotesSize * notesScale) + "em";
+  
+  // Log scaling for debugging (optional)
+  // log("Text scaling: front=" + (baseFrontSize * frontScale).toFixed(2) + "em, back=" + (baseBackSize * backScale).toFixed(2) + "em");
 }
 
 function updateProgressDisplay() {
@@ -1109,6 +1202,9 @@ function displayErrorCard(showAnswer) {
   
   notesElement.textContent = card.notes || "";
   
+  // Apply automatic text scaling
+  applyTextScaling(frontElement, backElement, notesElement);
+  
   starButton.style.display = "block";
   updateStarButton(card.starred);
   
@@ -1248,6 +1344,9 @@ function displayStarredCard(showAnswer) {
   }
   
   notesElement.textContent = card.notes || "";
+  
+  // Apply automatic text scaling
+  applyTextScaling(frontElement, backElement, notesElement);
   
   starButton.style.display = "block";
   updateStarButton(card.starred);
@@ -1564,7 +1663,7 @@ function renderOverviewStats() {
       var lvlKey = appLevels[k];
       var stats = levelStats[lvlKey] || { due: 0, total: 0 };
       html += '<tr class="overviewLevelRow">' +
-              '<td class="overviewLevelName">' + lvlKey + '</td>' +
+              '<td class="overviewLevelName"><a href="#" onclick="navigateToDeck(\'' + lvlKey + '\'); return false;">' + lvlKey + '</a></td>' +
               '<td class="overviewLevelStats">' + stats.due + ' due / ' + stats.total + ' total</td>' +
               '</tr>';
     }
@@ -1585,6 +1684,31 @@ function startStudy() {
   if (overviewBtn) overviewBtn.style.display = "";
 
   displayCurrentCard(false);
+}
+
+// Navigate to a specific deck/level and start studying from the first card
+function navigateToDeck(level) {
+  currentLevel = level;
+  currentCardIndex = 0;
+  
+  // Clear any error review or starred review modes
+  inErrorReviewMode = false;
+  inStarredReviewMode = false;
+  incorrectCardsQueue = [];
+  starredCardsQueue = [];
+  showingStarredOnly = false;
+  
+  // Update UI to reflect filter change
+  var starredFilterBtn = document.getElementById("starredFilterBtn");
+  if (starredFilterBtn) {
+    starredFilterBtn.classList.remove("active");
+  }
+  
+  // Show a toast notification
+  showToast("Navigating to " + level, 1500);
+  
+  // Switch to review mode and display the first card
+  startStudy();
 }
 
 // ─── Card Browser ─────────────────────────────────────────────────────────────
