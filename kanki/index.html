@@ -89,14 +89,36 @@
       <div id="toolButtons" class="menuSection">
         <button id="starredFilterBtn" onclick="toggleStarredFilter()">★ Star</button>
         <button id="reverseToggleBtn" onclick="toggleCardDirection()">↔ Flip</button>
+        <button id="overviewBtn" onclick="showDeckOverview()" style="display: none;">← Overview</button>
       </div>
     </div>
   </div>
 
   <div id="mainContainer">
+    <!-- Deck Overview Screen -->
+    <div id="deckOverview" style="display: none;">
+      <div class="deckOverview">
+        <h2 id="overviewDeckTitle"></h2>
+        <table class="overviewStatTable">
+          <tbody>
+            <tr><td>Total:</td><td id="overviewTotal"></td></tr>
+            <tr><td>Due now:</td><td id="overviewDue"></td></tr>
+            <tr><td>New:</td><td id="overviewNew"></td></tr>
+            <tr><td>Suspended:</td><td id="overviewSuspended"></td></tr>
+          </tbody>
+        </table>
+        <div class="overviewDivider">── By Level ──</div>
+        <div id="overviewLevels"></div>
+        <div class="buttonContainer overviewButtons">
+          <button onclick="startStudy()">Study</button>
+          <button onclick="showBrowseScreen()">Browse Cards</button>
+        </div>
+      </div>
+    </div>
+
     <div id="statusMessage" style="display: none;"></div>
 
-    <!-- Fixed card structure to prevent DOM rebuilding -->
+    <!-- Review Mode: Fixed card structure to prevent DOM rebuilding -->
     <div id="cardContainer" class="card">
       <div id="levelBadge" class="levelBadge"></div>
       <!-- Add star button to the card -->
@@ -106,6 +128,27 @@
       <div id="cardNotes" class="cardNotes"></div>
       <!-- Card statistics section -->
       <div id="cardStats" class="cardStats"></div>
+    </div>
+
+    <!-- Browse Mode: Card list view -->
+    <div id="browseContainer" style="display: none;">
+      <div id="browseHeader" class="browseHeader">
+        <div class="browseHeaderTop">
+          <span id="browseStats" class="browseStats"></span>
+          <button onclick="hideBrowseScreen()">← Back</button>
+        </div>
+        <div id="browseLevelFilter" class="browseLevelFilter"></div>
+        <div id="browseControls" class="browseControls">
+          <button onclick="selectAllCards()">Select All</button>
+          <button onclick="deselectAllCards()">Deselect All</button>
+          <button onclick="toggleSuspendSelected()" id="suspendBtn" style="display: none;">Suspend</button>
+          <button onclick="toggleSuspendSelected()" id="unsuspendBtn" style="display: none;">Unsuspend</button>
+          <button onclick="addTagToSelected()" id="addTagBtn" style="display: none;">Add Tag</button>
+          <button onclick="removeTagFromSelected()" id="removeTagBtn" style="display: none;">Rm Tag</button>
+        </div>
+      </div>
+      <div id="browseCardList" class="browseCardList"></div>
+      <div id="browsePagination" class="browsePagination"></div>
     </div>
 
     <div id="controlButtons" class="buttonContainer">
@@ -121,6 +164,7 @@
     <div class="buttonContainer">
       <button onclick="showResetProgressConfirm()">Reset Progress</button>
       <button onclick="showResetAllConfirm()">Reset All Data</button>
+      <button onclick="showBrowseScreen()">Browse Cards</button>
     </div>
   </div>
 

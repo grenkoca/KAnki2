@@ -14,6 +14,13 @@ var lastShowAnswerTime = 0; // Timestamp to prevent accidental button presses af
 var starredCardsQueue = []; // Queue for starred cards review
 var inStarredReviewMode = false; // Flag for starred review mode
 
+// Browse / overview state
+var browseCurrentPage = 0;
+var BROWSE_CARDS_PER_PAGE = 10;
+var browseSelectedIndices = [];
+var browseFilterLevel = 'all';
+var currentScreen = 'overview';
+
 // Initialize configuration from vocabulary.js if available
 function initializeConfig() {
   if (typeof KANKI_CONFIG !== 'undefined') {
@@ -44,8 +51,8 @@ function loadLanguageFont() {
   setTimeout(function() {
     fontLoaded = true;
     log(appLanguage + " font loading completed");
-    // Initial card display after font is loaded
-    displayCurrentCard(false);
+    // Show deck overview after font is loaded
+    showDeckOverview();
   }, 1000);
 }
 
@@ -159,7 +166,9 @@ function handleViewportChange() {
     // Apply device-specific scaling first
     detectDeviceAndSetScaling();
     initializeFixedHeights();
-    displayCurrentCard(false);
+    if (currentScreen === 'review') {
+      displayCurrentCard(false);
+    }
     // Update text display for responsive layout
     updateProgressDisplay();
     updateLevelDisplay();
@@ -215,7 +224,9 @@ function createCard(front, reading, back, notes, level, difficulty) {
     history: [],
     starred: false,
     timesViewed: 0,
-    lastViewed: null
+    lastViewed: null,
+    suspended: false,
+    tags: []
   };
 }
 
@@ -269,6 +280,11 @@ function loadDeck() {
     if (savedDeck) {
       deck = JSON.parse(savedDeck);
       log("Loaded saved deck with " + deck.cards.length + " cards");
+      // Migrate legacy cards missing new fields
+      for (var i = 0; i < deck.cards.length; i++) {
+        if (deck.cards[i].suspended === undefined) deck.cards[i].suspended = false;
+        if (!deck.cards[i].tags) deck.cards[i].tags = [];
+      }
       return true;
     }
   } catch (e) {
@@ -426,11 +442,12 @@ function getDueCards() {
   
   for (var i = 0; i < deck.cards.length; i++) {
     var card = deck.cards[i];
+    if (card.suspended) continue;
     if (card.nextReview <= now) {
       // Apply both level and starred filters
       var levelMatch = (currentLevel === "all" || card.level === currentLevel);
       var starMatch = (!showingStarredOnly || card.starred === true);
-      
+
       if (levelMatch && starMatch) {
         dueCards.push(card);
       }
@@ -868,6 +885,12 @@ function changeLevel(level) {
 // Initialize app on page load
 function onPageLoad() {
   log("Application initializing...");
+
+  // Hide review UI immediately; deck overview will be shown after load
+  var cardEl = document.getElementById("cardContainer");
+  var ctrlEl = document.getElementById("controlButtons");
+  if (cardEl) cardEl.style.display = "none";
+  if (ctrlEl) ctrlEl.style.display = "none";
 
   initializeConfig();
   
@@ -1460,7 +1483,7 @@ function detectDeviceAndSetScaling() {
   // Add a special class for specific device types
   var body = document.body;
   body.classList.remove('kindle-base', 'kindle-paperwhite', 'kindle-oasis');
-  
+
   if ((width >= 1070 && width <= 1080) && (height >= 1440 && height <= 1460)) {
     body.classList.add('kindle-paperwhite');
   } else if (width >= 1200) {
@@ -1468,4 +1491,386 @@ function detectDeviceAndSetScaling() {
   } else {
     body.classList.add('kindle-base');
   }
+}
+
+// ─── Deck Overview ────────────────────────────────────────────────────────────
+
+function showDeckOverview() {
+  currentScreen = 'overview';
+  var overviewEl = document.getElementById("deckOverview");
+  var cardEl     = document.getElementById("cardContainer");
+  var browseEl   = document.getElementById("browseContainer");
+  var ctrlEl     = document.getElementById("controlButtons");
+  var overviewBtn = document.getElementById("overviewBtn");
+
+  if (overviewEl)  overviewEl.style.display  = "block";
+  if (cardEl)      cardEl.style.display      = "none";
+  if (browseEl)    browseEl.style.display    = "none";
+  if (ctrlEl)      ctrlEl.style.display      = "none";
+  if (overviewBtn) overviewBtn.style.display = "none";
+
+  renderOverviewStats();
+}
+
+function hideDeckOverview() {
+  var overviewEl = document.getElementById("deckOverview");
+  if (overviewEl) overviewEl.style.display = "none";
+}
+
+function renderOverviewStats() {
+  var now = new Date().getTime();
+  var total = deck.cards.length;
+  var dueCount = 0;
+  var newCount = 0;
+  var suspendedCount = 0;
+  var levelStats = {};
+
+  for (var i = 0; i < deck.cards.length; i++) {
+    var card = deck.cards[i];
+    var lvl = card.level || appLevels[0];
+    if (!levelStats[lvl]) levelStats[lvl] = { due: 0, total: 0 };
+    levelStats[lvl].total++;
+
+    if (card.suspended) {
+      suspendedCount++;
+      continue;
+    }
+    if (!card.timesViewed) newCount++;
+    if (card.nextReview <= now) {
+      dueCount++;
+      levelStats[lvl].due++;
+    }
+  }
+
+  var titleEl = document.getElementById("overviewDeckTitle");
+  if (titleEl) titleEl.textContent = deck.name || "Flashcards";
+
+  var totalEl = document.getElementById("overviewTotal");
+  if (totalEl) totalEl.textContent = total;
+
+  var dueEl = document.getElementById("overviewDue");
+  if (dueEl) dueEl.textContent = dueCount;
+
+  var newEl = document.getElementById("overviewNew");
+  if (newEl) newEl.textContent = newCount;
+
+  var suspEl = document.getElementById("overviewSuspended");
+  if (suspEl) suspEl.textContent = suspendedCount;
+
+  var levelsEl = document.getElementById("overviewLevels");
+  if (levelsEl) {
+    var html = '<table class="overviewLevelTable">';
+    for (var k = 0; k < appLevels.length; k++) {
+      var lvlKey = appLevels[k];
+      var stats = levelStats[lvlKey] || { due: 0, total: 0 };
+      html += '<tr class="overviewLevelRow">' +
+              '<td class="overviewLevelName">' + lvlKey + '</td>' +
+              '<td class="overviewLevelStats">' + stats.due + ' due / ' + stats.total + ' total</td>' +
+              '</tr>';
+    }
+    html += '</table>';
+    levelsEl.innerHTML = html;
+  }
+}
+
+function startStudy() {
+  currentScreen = 'review';
+  hideDeckOverview();
+  var cardEl  = document.getElementById("cardContainer");
+  var ctrlEl  = document.getElementById("controlButtons");
+  var overviewBtn = document.getElementById("overviewBtn");
+
+  if (cardEl)      cardEl.style.display      = "block";
+  if (ctrlEl)      ctrlEl.style.display      = "";
+  if (overviewBtn) overviewBtn.style.display = "";
+
+  displayCurrentCard(false);
+}
+
+// ─── Card Browser ─────────────────────────────────────────────────────────────
+
+function getBrowseCards() {
+  var result = [];
+  for (var i = 0; i < deck.cards.length; i++) {
+    var card = deck.cards[i];
+    if (browseFilterLevel !== 'all' && card.level !== browseFilterLevel) continue;
+    result.push({ card: card, deckIndex: i });
+  }
+  return result;
+}
+
+function showBrowseScreen() {
+  currentScreen = 'browse';
+  browseCurrentPage = 0;
+  browseSelectedIndices = [];
+  browseFilterLevel = 'all';
+
+  var overviewEl  = document.getElementById("deckOverview");
+  var cardEl      = document.getElementById("cardContainer");
+  var ctrlEl      = document.getElementById("controlButtons");
+  var browseEl    = document.getElementById("browseContainer");
+  var overviewBtn = document.getElementById("overviewBtn");
+
+  if (overviewEl)  overviewEl.style.display  = "none";
+  if (cardEl)      cardEl.style.display      = "none";
+  if (ctrlEl)      ctrlEl.style.display      = "none";
+  if (browseEl)    browseEl.style.display    = "block";
+  if (overviewBtn) overviewBtn.style.display = "none";
+
+  renderBrowseLevelFilter();
+  renderBrowseCardList();
+  updateBrowseControls();
+}
+
+function hideBrowseScreen() {
+  var browseEl = document.getElementById("browseContainer");
+  if (browseEl) browseEl.style.display = "none";
+  showDeckOverview();
+}
+
+function renderBrowseLevelFilter() {
+  var el = document.getElementById("browseLevelFilter");
+  if (!el) return;
+  var html = '<button class="browseLevelBtn' + (browseFilterLevel === 'all' ? ' active' : '') +
+             '" onclick="setBrowseLevel(\'all\')">All</button>';
+  for (var i = 0; i < appLevels.length; i++) {
+    var lvl = appLevels[i];
+    html += '<button class="browseLevelBtn' + (browseFilterLevel === lvl ? ' active' : '') +
+            '" onclick="setBrowseLevel(\'' + lvl + '\')">' + lvl + '</button>';
+  }
+  el.innerHTML = html;
+}
+
+function setBrowseLevel(level) {
+  browseFilterLevel = level;
+  browseCurrentPage = 0;
+  browseSelectedIndices = [];
+  renderBrowseLevelFilter();
+  renderBrowseCardList();
+  updateBrowseControls();
+}
+
+function renderBrowseCardList() {
+  var filtered = getBrowseCards();
+  var total    = filtered.length;
+  var start    = browseCurrentPage * BROWSE_CARDS_PER_PAGE;
+  var end      = Math.min(start + BROWSE_CARDS_PER_PAGE, total);
+  var pageItems = filtered.slice(start, end);
+
+  var statsEl = document.getElementById("browseStats");
+  if (statsEl) statsEl.textContent = total + " cards";
+
+  var listEl = document.getElementById("browseCardList");
+  if (!listEl) return;
+
+  var html = '';
+  for (var i = 0; i < pageItems.length; i++) {
+    html += renderBrowseCard(pageItems[i].card, start + i);
+  }
+  listEl.innerHTML = html;
+
+  renderBrowsePagination(total);
+}
+
+function renderBrowseCard(card, browseIdx) {
+  var isSelected  = browseSelectedIndices.indexOf(browseIdx) !== -1;
+  var isSuspended = card.suspended === true;
+  var isStarred   = card.starred === true;
+
+  var itemClass = 'browseCardItem';
+  if (isSelected)  itemClass += ' selected';
+  if (isSuspended) itemClass += ' suspended';
+
+  var checkbox    = isSelected ? '&#9745;' : '&#9744;';
+  var suspBadge   = isSuspended ? ' <span class="suspendedIndicator">[susp]</span>' : '';
+  var starBadge   = isStarred   ? ' <span class="starBadge">&#9733;</span>' : '';
+
+  var tagHtml = '';
+  if (card.tags && card.tags.length > 0) {
+    for (var t = 0; t < card.tags.length; t++) {
+      tagHtml += '<span class="tagBadge">' + card.tags[t] + '</span>';
+    }
+  }
+
+  return '<div class="' + itemClass + '" onclick="toggleCardSelection(' + browseIdx + ')">' +
+    '<div class="browseCardHeader">' +
+      '<span class="browseCardCheckbox">' + checkbox + '</span>' +
+      '<span class="browseCardLevel">' + (card.level || '') + '</span>' +
+      suspBadge + starBadge +
+    '</div>' +
+    '<div class="browseCardFront">' + (card.front || '') + '</div>' +
+    '<div class="browseCardBack">' + (card.back || '') + '</div>' +
+    (tagHtml ? '<div class="browseCardTags">' + tagHtml + '</div>' : '') +
+  '</div>';
+}
+
+function toggleCardSelection(browseIdx) {
+  var pos = browseSelectedIndices.indexOf(browseIdx);
+  if (pos === -1) {
+    browseSelectedIndices.push(browseIdx);
+  } else {
+    browseSelectedIndices.splice(pos, 1);
+  }
+  renderBrowseCardList();
+  updateBrowseControls();
+}
+
+function selectAllCards() {
+  var filtered = getBrowseCards();
+  var start = browseCurrentPage * BROWSE_CARDS_PER_PAGE;
+  var end   = Math.min(start + BROWSE_CARDS_PER_PAGE, filtered.length);
+  for (var i = start; i < end; i++) {
+    if (browseSelectedIndices.indexOf(i) === -1) {
+      browseSelectedIndices.push(i);
+    }
+  }
+  renderBrowseCardList();
+  updateBrowseControls();
+}
+
+function deselectAllCards() {
+  browseSelectedIndices = [];
+  renderBrowseCardList();
+  updateBrowseControls();
+}
+
+function toggleSuspendSelected() {
+  if (browseSelectedIndices.length === 0) return;
+  var filtered = getBrowseCards();
+
+  // If any selected card is unsuspended → suspend all; otherwise unsuspend all
+  var hasUnsuspended = false;
+  for (var i = 0; i < browseSelectedIndices.length; i++) {
+    var idx = browseSelectedIndices[i];
+    if (idx < filtered.length && !filtered[idx].card.suspended) {
+      hasUnsuspended = true;
+      break;
+    }
+  }
+  for (var i = 0; i < browseSelectedIndices.length; i++) {
+    var idx = browseSelectedIndices[i];
+    if (idx < filtered.length) {
+      filtered[idx].card.suspended = hasUnsuspended;
+    }
+  }
+  saveDeck();
+  renderBrowseCardList();
+  updateBrowseControls();
+  showToast(hasUnsuspended ? "Cards suspended" : "Cards unsuspended", 1500);
+}
+
+function addTagToSelected() {
+  if (browseSelectedIndices.length === 0) return;
+  var filtered = getBrowseCards();
+
+  // Collect existing tags from the whole deck
+  var existingTags = [];
+  for (var i = 0; i < deck.cards.length; i++) {
+    var tags = deck.cards[i].tags || [];
+    for (var t = 0; t < tags.length; t++) {
+      if (existingTags.indexOf(tags[t]) === -1) existingTags.push(tags[t]);
+    }
+  }
+
+  var hint = existingTags.length > 0 ? " (existing: " + existingTags.join(", ") + ")" : "";
+  var tag = prompt("Enter tag to add" + hint + ":");
+  if (!tag || tag.trim() === "") return;
+  tag = tag.trim();
+
+  for (var i = 0; i < browseSelectedIndices.length; i++) {
+    var idx = browseSelectedIndices[i];
+    if (idx < filtered.length) {
+      var card = filtered[idx].card;
+      if (!card.tags) card.tags = [];
+      if (card.tags.indexOf(tag) === -1) card.tags.push(tag);
+    }
+  }
+  saveDeck();
+  renderBrowseCardList();
+  showToast('Tag "' + tag + '" added', 1500);
+}
+
+function removeTagFromSelected() {
+  if (browseSelectedIndices.length === 0) return;
+  var filtered = getBrowseCards();
+
+  var tag = prompt("Enter tag to remove:");
+  if (!tag || tag.trim() === "") return;
+  tag = tag.trim();
+
+  for (var i = 0; i < browseSelectedIndices.length; i++) {
+    var idx = browseSelectedIndices[i];
+    if (idx < filtered.length) {
+      var card = filtered[idx].card;
+      if (card.tags) {
+        card.tags = card.tags.filter(function(t) { return t !== tag; });
+      }
+    }
+  }
+  saveDeck();
+  renderBrowseCardList();
+  showToast('Tag "' + tag + '" removed', 1500);
+}
+
+function browsePrevPage() {
+  if (browseCurrentPage > 0) {
+    browseCurrentPage--;
+    browseSelectedIndices = [];
+    renderBrowseCardList();
+    updateBrowseControls();
+  }
+}
+
+function browseNextPage() {
+  var total   = getBrowseCards().length;
+  var maxPage = Math.ceil(total / BROWSE_CARDS_PER_PAGE) - 1;
+  if (browseCurrentPage < maxPage) {
+    browseCurrentPage++;
+    browseSelectedIndices = [];
+    renderBrowseCardList();
+    updateBrowseControls();
+  }
+}
+
+function updateBrowseControls() {
+  var count       = browseSelectedIndices.length;
+  var suspendBtn  = document.getElementById("suspendBtn");
+  var unsuspendBtn = document.getElementById("unsuspendBtn");
+  var addTagBtn   = document.getElementById("addTagBtn");
+  var removeTagBtn = document.getElementById("removeTagBtn");
+
+  if (count === 0) {
+    if (suspendBtn)   suspendBtn.style.display   = "none";
+    if (unsuspendBtn) unsuspendBtn.style.display = "none";
+    if (addTagBtn)    addTagBtn.style.display    = "none";
+    if (removeTagBtn) removeTagBtn.style.display = "none";
+    return;
+  }
+
+  // Show suspend vs unsuspend based on selected cards' state
+  var filtered = getBrowseCards();
+  var allSuspended = true;
+  for (var i = 0; i < count; i++) {
+    var idx = browseSelectedIndices[i];
+    if (idx < filtered.length && !filtered[idx].card.suspended) {
+      allSuspended = false;
+      break;
+    }
+  }
+
+  if (suspendBtn)   suspendBtn.style.display   = allSuspended ? "none" : "";
+  if (unsuspendBtn) unsuspendBtn.style.display = allSuspended ? "" : "none";
+  if (addTagBtn)    addTagBtn.style.display    = "";
+  if (removeTagBtn) removeTagBtn.style.display = "";
+}
+
+function renderBrowsePagination(total) {
+  var el = document.getElementById("browsePagination");
+  if (!el) return;
+  var totalPages     = Math.max(1, Math.ceil(total / BROWSE_CARDS_PER_PAGE));
+  var currentPageNum = browseCurrentPage + 1;
+  var html = '<button onclick="browsePrevPage()"' + (browseCurrentPage === 0 ? ' disabled' : '') + '>&#9664; Prev</button>';
+  html += '<span class="currentPage">Page ' + currentPageNum + ' / ' + totalPages + '</span>';
+  html += '<button onclick="browseNextPage()"' + (currentPageNum >= totalPages ? ' disabled' : '') + '>Next &#9654;</button>';
+  el.innerHTML = html;
 }
