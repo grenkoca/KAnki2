@@ -333,19 +333,25 @@ h1 {
 }
 
 #controlButtons {
-  height: 100px; /* Reduced height since interval buttons will be in same location as show answer */
+  height: 100px; /* Fixed height to maintain position when switching buttons */
   position: relative;
   margin: 20px 0 20px 0; /* Reduced bottom margin */
   text-align: center;
   overflow: visible; /* Allow content to be visible instead of hidden */
 }
 
+#showAnswerBtn {
+  /* Ensure show answer button maintains consistent position */
+  display: inline-block;
+}
+
 #intervalButtons {
   text-align: center;
   position: absolute;
-  top: 0; /* Positioned at top to overlay with show answer button position */
+  top: 50%; /* Center vertically in container */
   left: 0;
   right: 0;
+  transform: translateY(-50%); /* Perfectly center the buttons */
   width: 100%;
   height: auto; /* Allow natural height based on content */
 }

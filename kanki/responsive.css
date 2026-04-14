@@ -122,7 +122,8 @@ button {
   }
 
   #intervalButtons {
-    top: 85px;
+    top: 50%;
+    transform: translateY(-50%);
     height: 100px;
   }
 
@@ -203,7 +204,8 @@ button {
   }
 
   #intervalButtons {
-    top: 100px;
+    top: 50%;
+    transform: translateY(-50%);
     height: 120px;
   }
 
@@ -305,7 +307,8 @@ button {
   }
 
   #intervalButtons {
-    top: 130px;
+    top: 50%;
+    transform: translateY(-50%);
     height: 160px;
   }
 
@@ -427,7 +430,8 @@ button {
 
   /* More space between button rows */
   #intervalButtons {
-    top: 80px;
+    top: 50%;
+    transform: translateY(-50%);
     height: 110px;
   }
 }
@@ -492,7 +496,8 @@ button {
   }
   
   #intervalButtons {
-    top: 60px;
+    top: 50%;
+    transform: translateY(-50%);
   }
 }
 
