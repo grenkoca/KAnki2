@@ -1,17 +1,6 @@
 # KAnki: Universal Flashcard App for Kindle
 
 KAnki is a spaced repetition flashcard application designed specifically for jailbroken Kindle devices. It helps users learn vocabulary in any language through digital flashcards with a spaced repetition system.
-> Huge thanks to [PolishPenguin](https://github.com/polish-penguin-dev) for lending a hand — couldn't do it without them!
-
-**KAnki Community** <br /> 
-
-<img width="400" height="auto" alt="image" src="https://github.com/user-attachments/assets/f0d6f784-b7b0-4f6f-85a8-8a8dce67afc2" />
-<img width="400" height="auto" alt="image" src="https://github.com/user-attachments/assets/bf23c7dc-4a0e-4d7e-8b9e-1a1588cd2487" />
-
-Share your language / study material configurations with others with the new KAnki community update on Üben
-
-**Community**
-- For more information / doubts / suggestions join our discord - https://discord.gg/JtcrpG7ECA
 
 ## Features
 
