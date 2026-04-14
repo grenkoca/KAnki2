@@ -3,29 +3,6 @@
 KAnki is a spaced repetition flashcard application designed specifically for jailbroken Kindle devices. It helps users learn vocabulary in any language through digital flashcards with a spaced repetition system.
 > Huge thanks to [PolishPenguin](https://github.com/polish-penguin-dev) for lending a hand — couldn't do it without them!
 
-<p>
-  <a href="https://ko-fi.com/kurizu" target="_blank">
-    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi" />
-  </a>
-</p>
-
-## ✨ New Update: [Üben + KAnki Workflow](https://www.uben.online/)
-
-You can now use **Uben** as a companion tool to manage your decks more easily.  
-Since Kindle itself cannot process `.apkg` files directly, the workflow is:  
-
-1. **Find a deck on Anki** (e.g., shared decks online).  
-2. **Import the `.apkg` into Uben**.  
-3. **Edit, add, or update cards** using Uben’s modern UI.  
-4. **Export from Uben** → generates a `kanki_config.js`.  
-5. **Transfer `kanki_config.js` to your Kindle** (replace your existing file).  
-6. Launch KAnki on your Kindle with the new deck.  
-
-**Advantage of this approach:**  
-- You get a **much better UI for editing and creating decks for KAnki** on Uben.  
-- Once you’re done, you just export the ready-to-use configuration to your Kindle.  
-- No need to manually type out decks on Kindle anymore!
-
 **KAnki Community** <br /> 
 
 <img width="400" height="auto" alt="image" src="https://github.com/user-attachments/assets/f0d6f784-b7b0-4f6f-85a8-8a8dce67afc2" />
