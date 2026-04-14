@@ -6,6 +6,10 @@
   font-display: block;
 }
 
+html {
+  height: 100%;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -13,6 +17,7 @@ body {
   background-color: #f5f5f5;
   filter: grayscale(1);
   box-sizing: border-box;
+  height: 100%;
 }
 
 h1 {
@@ -817,7 +822,7 @@ h1 {
   .browseCardItem {
     padding: 15px;
   }
-  
+
   .browseCardFront {
     font-size: 1.2em;
   }
@@ -827,12 +832,152 @@ h1 {
   #browseContainer {
     max-width: 1000px;
   }
-  
+
   .browseCardItem {
     padding: 18px;
   }
-  
+
   .browseCardFront {
     font-size: 1.3em;
   }
+}
+
+/* ── Review Screen (full page) ────────────────────────────────── */
+
+#reviewScreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #f5f5f5;
+  z-index: 50;
+  overflow: hidden;
+}
+
+#reviewTopBar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50px;
+  display: table;
+  width: 100%;
+  background-color: #eaeaea;
+  border-bottom: 2px solid #ccc;
+  box-sizing: border-box;
+  padding: 0 10px;
+}
+
+.reviewTopLeft {
+  display: table-cell;
+  vertical-align: middle;
+  width: 80px;
+}
+
+.reviewTopLeft button {
+  padding: 5px 10px;
+  border: 1px solid #000;
+  background-color: #fff;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.reviewTopCenter {
+  display: table-cell;
+  vertical-align: middle;
+  text-align: center;
+}
+
+.reviewTopCenter .progressBar {
+  display: block;
+  font-weight: bold;
+  font-size: 0.95em;
+  margin: 0;
+}
+
+.reviewTopCenter .levelDisplay {
+  display: block;
+  font-size: 0.8em;
+  color: #444;
+  margin: 0;
+}
+
+.reviewTopCenter #statusMessage {
+  display: inline-block;
+  font-size: 0.85em;
+  font-weight: bold;
+  background-color: #444;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-top: 2px;
+}
+
+.reviewTopRight {
+  display: table-cell;
+  vertical-align: middle;
+  width: 50px;
+  text-align: right;
+}
+
+/* Card fills the space between top bar and controls */
+#reviewScreen #cardContainer {
+  position: absolute !important;
+  top: 50px !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 110px !important;
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background-color: #fff;
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  padding: 20px 30px;
+  box-sizing: border-box;
+}
+
+/* Divider shown between front and back after revealing answer */
+.cardDivider {
+  border: none;
+  border-top: 2px solid #ddd;
+  margin: 20px 0;
+}
+
+/* Controls fixed at the bottom of the review screen */
+#reviewScreen #controlButtons {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  height: 110px !important;
+  width: 100% !important;
+  border-top: 2px solid #ccc;
+  background-color: #f0f0f0;
+  text-align: center;
+  padding: 10px 0;
+  box-sizing: border-box;
+}
+
+#reviewScreen #showAnswerBtn {
+  min-width: 60%;
+  padding: 14px 20px;
+  font-size: 1.1em;
+  border: 1px solid #000;
+  display: inline-block;
+  cursor: pointer;
+}
+
+/* Browse card item without checkbox column */
+#browseContainer .browseCardHeader {
+  margin-bottom: 8px;
+}
+
+#browseContainer .browseCardCheckbox {
+  display: none;
 }

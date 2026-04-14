@@ -3,22 +3,27 @@ var currentCardIndex = 0;
 var correctAnswers = 0;
 var incorrectAnswers = 0;
 var deck = null;
-var currentLevel = "all"; 
+var currentLevel = "all";
 var fontLoaded = false;
-var incorrectCardsQueue = []; 
+var incorrectCardsQueue = [];
 var inErrorReviewMode = false;
-var showingStarredOnly = false; 
-var isReversedMode = false; 
-var deviceScaleFactor = 1.0; // New variable for device scaling
-var lastShowAnswerTime = 0; // Timestamp to prevent accidental button presses after showing answer
-var starredCardsQueue = []; // Queue for starred cards review
-var inStarredReviewMode = false; // Flag for starred review mode
+var showingStarredOnly = false;
+var isReversedMode = false;
+var deviceScaleFactor = 1.0;
+var lastShowAnswerTime = 0;
+var starredCardsQueue = [];
+var inStarredReviewMode = false;
 
-// Browse / overview state
+// Manage screen state (selection / tagging)
+var manageCurrentPage = 0;
+var CARDS_PER_PAGE = 10;
+var manageSelectedIndices = [];
+var manageFilterLevel = 'all';
+
+// Browse screen state (read-only)
 var browseCurrentPage = 0;
-var BROWSE_CARDS_PER_PAGE = 10;
-var browseSelectedIndices = [];
 var browseFilterLevel = 'all';
+
 var currentScreen = 'overview';
 
 // Initialize configuration from vocabulary.js if available
@@ -43,15 +48,12 @@ function log(logStuff) {
 
 function loadLanguageFont() {
   log("Loading " + appLanguage + " font...");
-  
-  // Force font loading early
+
   document.documentElement.style.fontFamily = "LanguageFont, sans-serif";
-  
-  // Wait for Kindle's slower processing
+
   setTimeout(function() {
     fontLoaded = true;
     log(appLanguage + " font loading completed");
-    // Show deck overview after font is loaded
     showDeckOverview();
   }, 1000);
 }
@@ -59,71 +61,48 @@ function loadLanguageFont() {
 // Initialize fixed element heights to prevent layout shifts on e-ink display
 function initializeFixedHeights() {
   log("Initializing fixed element heights for e-ink optimization...");
-  
+
   var viewport = detectViewportAndAdjust();
   var cardContainer = document.getElementById("cardContainer");
   var controlButtons = document.getElementById("controlButtons");
   var intervalButtons = document.getElementById("intervalButtons");
-  
-  // Set dimensions based on screen size
-  var cardHeight = "300px";
-  var controlHeight = "100px"; // Reduced control height
-  var intervalTop = "0px"; // Interval buttons appear at the top of the control section now
+
   var backMinHeight = "50px";
   var notesMinHeight = "20px";
-  
-  // Adjust dimensions based on detected viewport
+
   if (viewport.width >= 1800 || viewport.height >= 2400) {
-    // Kindle Scribe
-    cardHeight = "700px";
-    controlHeight = "160px"; // Reduced from 320px
-    intervalTop = "0px";
     backMinHeight = "120px";
     notesMinHeight = "40px";
   } else if (viewport.width >= 1050 || viewport.height >= 1400) {
-    // Large Kindles
-    cardHeight = "550px";
-    controlHeight = "120px"; // Reduced from 240px
-    intervalTop = "0px";
     backMinHeight = "90px";
     notesMinHeight = "30px";
   } else if (viewport.width >= 750 || viewport.height >= 1000) {
-    // Medium Kindles
-    cardHeight = "400px";
-    controlHeight = "100px"; // Reduced from 200px
-    intervalTop = "0px";
     backMinHeight = "65px";
     notesMinHeight = "25px";
   }
-  
+
+  // In review mode the CSS handles card / control dimensions; just ensure overflow
   if (cardContainer) {
-    cardContainer.style.height = cardHeight; 
     cardContainer.style.overflowY = "auto";
     cardContainer.style.overflowX = "hidden";
   }
-  
-  if (controlButtons) {
-    controlButtons.style.height = controlHeight; 
-    controlButtons.style.overflow = "visible";
-  }
-  
+
   if (intervalButtons) {
     intervalButtons.style.display = "block";
     intervalButtons.style.visibility = "hidden";
-    intervalButtons.style.top = intervalTop;
     var forceLayout = intervalButtons.offsetHeight;
   }
-  
+
   var backElement = document.getElementById("cardBack");
   if (backElement) {
     backElement.style.minHeight = backMinHeight;
   }
-  
+
   var notesElement = document.getElementById("cardNotes");
   if (notesElement) {
     notesElement.style.minHeight = notesMinHeight;
   }
-  
+
   log("Fixed element heights initialized for viewport " + viewport.width + "x" + viewport.height);
 }
 
@@ -131,16 +110,13 @@ function initializeFixedHeights() {
 function detectViewportAndAdjust() {
   var width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth;
   var height = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
-  
+
   log("Detected viewport size: " + width + "x" + height);
-  
-  // Add a CSS class to the body based on screen size range
+
   var body = document.body;
-  
-  // Remove existing size classes
+
   body.classList.remove('kindle-small', 'kindle-medium', 'kindle-large', 'kindle-xlarge');
-  
-  // Add appropriate class
+
   if (width <= 600) {
     body.classList.add('kindle-small');
   } else if (width <= 850) {
@@ -150,36 +126,32 @@ function detectViewportAndAdjust() {
   } else {
     body.classList.add('kindle-xlarge');
   }
-  
+
   return { width: width, height: height };
 }
 
 // Handle window resize or orientation change events
 function handleViewportChange() {
-  // Debounce the resize event
   if (window.resizeTimer) {
     clearTimeout(window.resizeTimer);
   }
-  
+
   window.resizeTimer = setTimeout(function() {
-    log("Viewport changed, reinitializing and applying device scaling...");
-    // Apply device-specific scaling first
+    log("Viewport changed, reinitializing...");
     detectDeviceAndSetScaling();
     initializeFixedHeights();
     if (currentScreen === 'review') {
       displayCurrentCard(false);
     }
-    // Update text display for responsive layout
     updateProgressDisplay();
     updateLevelDisplay();
-    
-    // Reposition any visible popups or toasts
+
     var toast = document.getElementById("toastNotification");
     if (toast && toast.style.display === "block") {
       var screenHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
       toast.style.top = (screenHeight > 1000) ? "120px" : "80px";
     }
-    
+
     var overlay = document.getElementById("confirmationOverlay");
     if (overlay && overlay.style.display === "block") {
       var popup = overlay.querySelector(".popup");
@@ -213,7 +185,7 @@ function createCard(front, reading, back, notes, level, difficulty) {
   if (reading) {
     displayText = front + " (" + reading + ")";
   }
-  
+
   return {
     front: displayText,
     back: back,
@@ -233,7 +205,7 @@ function createCard(front, reading, back, notes, level, difficulty) {
 // Default deck with words from vocabulary.js
 function createDefaultDeck() {
   var deck = createDeck();
-  
+
   if (typeof VOCABULARY !== 'undefined') {
     for (var level in VOCABULARY) {
       if (VOCABULARY.hasOwnProperty(level)) {
@@ -253,14 +225,14 @@ function createDefaultDeck() {
         }
       }
     }
-    
+
     log("Created default deck with " + deck.cards.length + " cards");
   } else {
     log("Warning: VOCABULARY not found, using minimal deck");
     deck.cards.push(createCard("Example", null, "Translation", "Sample card", appLevels[0], 0));
     deck.cards.push(createCard("Second", null, "Another translation", "Another sample", appLevels[0], 0));
   }
-  
+
   return deck;
 }
 
@@ -283,7 +255,6 @@ function loadDeck() {
     if (savedDeck) {
       deck = JSON.parse(savedDeck);
       log("Loaded saved deck with " + deck.cards.length + " cards");
-      // Migrate legacy cards missing new fields
       for (var i = 0; i < deck.cards.length; i++) {
         if (deck.cards[i].suspended === undefined) deck.cards[i].suspended = false;
         if (!deck.cards[i].tags) deck.cards[i].tags = [];
@@ -293,20 +264,18 @@ function loadDeck() {
   } catch (e) {
     log("Error loading deck: " + e.message);
   }
-  
-  // If no saved deck or error, create a new one
+
   deck = createDefaultDeck();
   log("Created new default deck");
   return false;
 }
 
-// Update status message for notifications (not confirmations)
+// Update status message for notifications
 function updateStatusMessage(message) {
   var statusElement = document.getElementById("statusMessage");
   if (!statusElement) return;
-  
+
   statusElement.textContent = message;
-  
   statusElement.style.display = "block";
 
   setTimeout(function() {
@@ -321,120 +290,107 @@ function showConfirmation(message, onConfirm) {
   var messageElement = document.getElementById("confirmationMessage");
   var yesButton = document.getElementById("confirmYesBtn");
   var noButton = document.getElementById("confirmNoBtn");
-  
-  // Set message
+
   messageElement.textContent = message;
-  
-  // Adjust popup position for different screen sizes
+
   var screenHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
-  var topPosition = Math.round(screenHeight / 2 - 100);  // Center vertically
+  var topPosition = Math.round(screenHeight / 2 - 100);
   popup.style.top = topPosition + "px";
-  
-  // Set button handlers
+
   yesButton.onclick = function() {
     overlay.style.display = "none";
     if (onConfirm) onConfirm();
   };
-  
+
   noButton.onclick = function() {
     overlay.style.display = "none";
   };
-  
-  // Show overlay
+
   overlay.style.display = "block";
 }
 
 // Spaced repetition algorithm (simplified SM-2)
 function calculateNextReview(card, wasCorrect) {
   var now = new Date().getTime();
-  
-  // Record the review in history
+
   card.history.push({
     date: now,
     result: wasCorrect
   });
-  
+
   if (wasCorrect) {
-    // Increase the level if correct
     card.difficulty += 1;
-    
-    // Calculate next review based on difficulty
+
     var interval;
     switch (card.difficulty) {
       case 1:
-        interval = 1 * 24 * 60 * 60 * 1000; // 1 day
+        interval = 1 * 24 * 60 * 60 * 1000;
         break;
       case 2:
-        interval = 3 * 24 * 60 * 60 * 1000; // 3 days
+        interval = 3 * 24 * 60 * 60 * 1000;
         break;
       case 3:
-        interval = 7 * 24 * 60 * 60 * 1000; // 1 week
+        interval = 7 * 24 * 60 * 60 * 1000;
         break;
       case 4:
-        interval = 14 * 24 * 60 * 60 * 1000; // 2 weeks
+        interval = 14 * 24 * 60 * 60 * 1000;
         break;
       case 5:
-        interval = 30 * 24 * 60 * 60 * 1000; // 1 month
+        interval = 30 * 24 * 60 * 60 * 1000;
         break;
       default:
-        interval = 60 * 24 * 60 * 60 * 1000; // 2 months
+        interval = 60 * 24 * 60 * 60 * 1000;
         break;
     }
-    
+
     card.nextReview = now + interval;
   } else {
-    // If wrong, reset difficulty and review soon
     card.difficulty = 0;
-    card.nextReview = now + (10 * 60 * 1000); // 10 minutes
+    card.nextReview = now + (10 * 60 * 1000);
   }
-  
+
   saveDeck();
-  
+
   return card;
 }
 
 // Function to set next review time based on difficulty
 function setNextReviewTime(card, difficulty) {
   var now = new Date().getTime();
-  
-  // Record the review in history
+
   card.history.push({
     date: now,
     result: true,
     difficulty: difficulty
   });
-  
-  // Calculate interval based on difficulty
+
   var interval;
   switch (difficulty) {
     case 'again':
-      interval = 10 * 60 * 1000; // 10 minutes
-      card.difficulty = Math.max(0, card.difficulty - 1); // Decrease difficulty
+      interval = 10 * 60 * 1000;
+      card.difficulty = Math.max(0, card.difficulty - 1);
       break;
     case 'hard':
-      interval = 1 * 24 * 60 * 60 * 1000; // 1 day
-      // Keep difficulty the same
+      interval = 1 * 24 * 60 * 60 * 1000;
       break;
     case 'good':
-      interval = 3 * 24 * 60 * 60 * 1000; // 3 days
-      card.difficulty += 1; // Increase difficulty
+      interval = 3 * 24 * 60 * 60 * 1000;
+      card.difficulty += 1;
       break;
     case 'easy':
-      interval = 4 * 24 * 60 * 60 * 1000; // 4 days
-      card.difficulty += 2; // Increase difficulty more
+      interval = 4 * 24 * 60 * 60 * 1000;
+      card.difficulty += 2;
       break;
     default:
-      interval = 1 * 24 * 60 * 60 * 1000; // Default 1 day
+      interval = 1 * 24 * 60 * 60 * 1000;
   }
-  
-  // Apply a multiplier based on current difficulty level (longer intervals for higher difficulty)
+
   if (card.difficulty > 0) {
     interval = interval * (1 + (card.difficulty * 0.5));
   }
-  
-  // Set next review time
+
   card.nextReview = now + interval;
-  
+
   return card;
 }
 
@@ -442,12 +398,11 @@ function setNextReviewTime(card, difficulty) {
 function getDueCards() {
   var now = new Date().getTime();
   var dueCards = [];
-  
+
   for (var i = 0; i < deck.cards.length; i++) {
     var card = deck.cards[i];
     if (card.suspended) continue;
     if (card.nextReview <= now) {
-      // Apply both level and starred filters
       var levelMatch = (currentLevel === "all" || card.level === currentLevel);
       var starMatch = (!showingStarredOnly || card.starred === true);
 
@@ -456,74 +411,70 @@ function getDueCards() {
       }
     }
   }
-  
+
   return dueCards;
 }
 
 // Get starred cards that have been reviewed in the current session
 function getStarredCardsFromCurrentSession() {
   var starredCards = [];
-  
+
   for (var i = 0; i < deck.cards.length; i++) {
     var card = deck.cards[i];
     if (card.starred === true && card.timesViewed > 0) {
-      // Apply level filter to starred cards too
       var levelMatch = (currentLevel === "all" || card.level === currentLevel);
       if (levelMatch) {
         starredCards.push(card);
       }
     }
   }
-  
+
   return starredCards;
 }
 
-// Display current card - optimized to update DOM elements instead of recreating them
+// Display current card
 function displayCurrentCard(showAnswer) {
   var dueCards = getDueCards();
-  
-  // Get DOM elements once 
+
   var cardContainer = document.getElementById("cardContainer");
   var levelBadge = document.getElementById("levelBadge");
   var frontElement = document.getElementById("cardFront");
   var backElement = document.getElementById("cardBack");
   var notesElement = document.getElementById("cardNotes");
+  var dividerElement = document.getElementById("cardDivider");
   var showAnswerBtn = document.getElementById("showAnswerBtn");
   var intervalButtons = document.getElementById("intervalButtons");
-  var starButton = document.getElementById("starButton");
-  
-  // Hide answer elements by default
+
   backElement.style.display = "none";
   notesElement.style.display = "none";
-  
+  if (dividerElement) dividerElement.style.display = "none";
+
   if (dueCards.length === 0) {
     cardContainer.style.display = "block";
-    frontElement.innerHTML = "<div style='font-size: 0.7em; font-weight: normal; text-align: center; padding: 20px;'><p>No cards due for review!</p><p>Great job! </p></div>";
+    frontElement.innerHTML = "<div style='font-size: 0.7em; font-weight: normal; text-align: center; padding: 20px;'><p>No cards due for review!</p><p>Great job!</p></div>";
     levelBadge.style.display = "none";
     showAnswerBtn.style.display = "none";
-
     intervalButtons.style.display = "block";
     intervalButtons.style.visibility = "hidden";
-    starButton.style.display = "none"; 
-    document.getElementById("cardStats").style.display = "none"; 
-  
+    document.getElementById("cardStats").style.display = "none";
+
     if (incorrectCardsQueue.length > 0) {
       showErrorReviewPrompt();
     } else if (getStarredCardsFromCurrentSession().length > 0 && !inStarredReviewMode) {
       showStarredReviewPrompt();
     }
-    
+
     updateProgressDisplay();
     return;
   }
   cardContainer.style.display = "block";
-  document.getElementById("cardStats").style.display = "block"; // Show stats
+  document.getElementById("cardStats").style.display = "block";
 
   var card = dueCards[currentCardIndex % dueCards.length];
-  
+
   levelBadge.style.display = "block";
   levelBadge.textContent = card.level;
-  
+
   if (isReversedMode) {
     frontElement.innerHTML = card.back;
     backElement.textContent = card.front;
@@ -531,40 +482,36 @@ function displayCurrentCard(showAnswer) {
     frontElement.innerHTML = card.front;
     backElement.textContent = card.back;
   }
-  
+
   notesElement.textContent = card.notes || "";
-  
-  // Apply automatic text scaling
+
   applyTextScaling(frontElement, backElement, notesElement);
-  
-  starButton.style.display = "block";
+
   updateStarButton(card.starred);
 
-  if (!showAnswer) { 
+  if (!showAnswer) {
     card.timesViewed = (card.timesViewed || 0) + 1;
     card.lastViewed = new Date().getTime();
-    // Save view statistics
-    saveDeck();
+    // Don't save on every view — answer handlers call saveDeck() and Kindle
+    // is too slow to serialize 6000+ cards on each card display.
   }
-  
+
   updateCardStats(card);
-  
-  // Check if card content is scrollable and update visual indicators
   updateScrollIndicators();
-  
+
   if (showAnswer) {
     backElement.style.display = "block";
     notesElement.style.display = "block";
+    if (dividerElement) dividerElement.style.display = "block";
     showAnswerBtn.style.display = "none";
     intervalButtons.style.display = "block";
     intervalButtons.style.visibility = "visible";
-    // Update scroll indicators after showing answer (content height may change)
     setTimeout(updateScrollIndicators, 100);
   } else {
     showAnswerBtn.style.display = "block";
-    intervalButtons.style.display = "none"; // Hide completely instead of using visibility
+    intervalButtons.style.display = "none";
   }
-  
+
   updateProgressDisplay();
 }
 
@@ -572,63 +519,48 @@ function displayCurrentCard(showAnswer) {
 function applyTextScaling(frontElement, backElement, notesElement) {
   var cardContainer = document.getElementById("cardContainer");
   if (!cardContainer || !frontElement || !backElement) return;
-  
-  // Get available space (card height minus padding and other elements)
-  var cardHeight = cardContainer.clientHeight;
-  var availableHeight = cardHeight - 100; // Reserve space for level badge, stats, etc.
-  
-  // Get text lengths
+
   var frontText = frontElement.textContent || frontElement.innerHTML;
   var backText = backElement.textContent || backElement.innerHTML;
   var notesText = notesElement.textContent || notesElement;
-  
-  // Calculate character counts
+
   var frontLength = frontText ? frontText.length : 0;
   var backLength = backText ? backText.length : 0;
   var notesLength = notesText ? notesText.length : 0;
-  
+
   var maxLength = Math.max(frontLength, backLength);
   var totalLength = frontLength + backLength + notesLength;
-  
-  // Base font sizes (in em)
+
   var baseFrontSize = 2.0;
   var baseBackSize = 1.5;
   var baseNotesSize = 0.9;
-  
-  // Scaling thresholds (characters)
+
   var shortText = 50;
   var mediumText = 200;
   var longText = 500;
   var veryLongText = 1000;
-  
-  // Calculate scaling factors based on text length
+
   var frontScale = 1.0;
   var backScale = 1.0;
   var notesScale = 1.0;
-  
+
   if (maxLength <= shortText) {
-    // Short text - use base size
     frontScale = 1.0;
     backScale = 1.0;
   } else if (maxLength <= mediumText) {
-    // Medium text - slight reduction
     frontScale = 0.85;
     backScale = 0.85;
   } else if (maxLength <= longText) {
-    // Long text - moderate reduction
     frontScale = 0.7;
     backScale = 0.7;
   } else if (maxLength <= veryLongText) {
-    // Very long text - significant reduction
     frontScale = 0.55;
     backScale = 0.55;
   } else {
-    // Extremely long text - maximum reduction
     frontScale = 0.45;
     backScale = 0.45;
   }
-  
-  // Additional scaling based on total content
+
   if (totalLength > veryLongText * 1.5) {
     frontScale *= 0.85;
     backScale *= 0.85;
@@ -636,52 +568,47 @@ function applyTextScaling(frontElement, backElement, notesElement) {
     frontScale *= 0.9;
     backScale *= 0.9;
   }
-  
-  // Apply scaling with minimum bounds
+
   var minFrontSize = 0.8;
   var minBackSize = 0.6;
   var minNotesSize = 0.6;
-  
+
   frontScale = Math.max(minFrontSize / baseFrontSize, frontScale);
   backScale = Math.max(minBackSize / baseBackSize, backScale);
   notesScale = Math.max(minNotesSize / baseNotesSize, notesScale);
-  
-  // Apply the calculated font sizes
+
   frontElement.style.fontSize = (baseFrontSize * frontScale) + "em";
   backElement.style.fontSize = (baseBackSize * backScale) + "em";
   notesElement.style.fontSize = (baseNotesSize * notesScale) + "em";
-  
-  // Log scaling for debugging (optional)
-  // log("Text scaling: front=" + (baseFrontSize * frontScale).toFixed(2) + "em, back=" + (baseBackSize * backScale).toFixed(2) + "em");
 }
 
 function updateProgressDisplay() {
   var progressElement = document.getElementById("progressDisplay");
-  
+  if (!progressElement) return;
+
   if (inErrorReviewMode) {
-    progressElement.textContent = "⚠️ " + (currentCardIndex + 1) + 
-      "/" + incorrectCardsQueue.length + " • ✓" + correctAnswers + 
-      " • ✗" + incorrectAnswers;
+    progressElement.textContent = "Review: " + (currentCardIndex + 1) +
+      "/" + incorrectCardsQueue.length + " \u2022 \u2713" + correctAnswers +
+      " \u2022 \u2717" + incorrectAnswers;
     return;
   }
-  
+
   if (inStarredReviewMode) {
-    progressElement.textContent = "★ " + (currentCardIndex + 1) + 
-      "/" + starredCardsQueue.length + " starred cards";
+    progressElement.textContent = "\u2605 " + (currentCardIndex + 1) +
+      "/" + starredCardsQueue.length + " starred";
     return;
   }
-  
+
   var dueCards = getDueCards();
-  
+
   if (dueCards.length === 0) {
-    progressElement.textContent = "✓ Done!";
+    progressElement.textContent = "\u2713 Done!";
     return;
   }
-  
-  progressElement.textContent = "Card :  " + (currentCardIndex % dueCards.length + 1) + 
-      "/" + dueCards.length + " • ✓" + correctAnswers + 
-      " • ✗" + incorrectAnswers;
-  
+
+  progressElement.textContent = (currentCardIndex % dueCards.length + 1) +
+      "/" + dueCards.length + " \u2022 \u2713" + correctAnswers +
+      " \u2022 \u2717" + incorrectAnswers;
 
   updateLevelDisplay();
 }
@@ -689,14 +616,15 @@ function updateProgressDisplay() {
 
 function updateLevelDisplay() {
   var levelDisplayElement = document.getElementById("levelDisplay");
+  if (!levelDisplayElement) return;
   var displayText = (currentLevel === "all" ? "All" : currentLevel);
 
   if (showingStarredOnly) {
-    displayText += " ★";
+    displayText += " \u2605";
   }
- 
-  displayText += " • " + (isReversedMode ? "Native→Target" : "Target→Native");
-  
+
+  displayText += " \u2022 " + (isReversedMode ? "Native\u2192Target" : "Target\u2192Native");
+
   levelDisplayElement.textContent = displayText;
 }
 
@@ -704,40 +632,32 @@ function updateLevelDisplay() {
 function updateScrollIndicators() {
   var cardContainer = document.getElementById("cardContainer");
   if (!cardContainer) return;
-  
-  // Small delay to ensure DOM is fully rendered
+
   setTimeout(function() {
-    // Check if content is actually scrollable
     var hasScrollableContent = cardContainer.scrollHeight > cardContainer.clientHeight;
-    
+
     if (!hasScrollableContent) {
-      // No scrollable content - hide all indicators
       cardContainer.classList.remove("scrollable-top");
       cardContainer.classList.remove("scrollable-bottom");
       return;
     }
-    
-    // Content is scrollable - check current scroll position
-    var isScrollableTop = cardContainer.scrollTop > 5; // Small threshold to avoid flickering
+
+    var isScrollableTop = cardContainer.scrollTop > 5;
     var isScrollableBottom = cardContainer.scrollTop < (cardContainer.scrollHeight - cardContainer.clientHeight - 5);
-    
-    // Add or remove classes based on scroll position
+
     if (isScrollableTop) {
       cardContainer.classList.add("scrollable-top");
     } else {
       cardContainer.classList.remove("scrollable-top");
     }
-    
+
     if (isScrollableBottom && hasScrollableContent) {
       cardContainer.classList.add("scrollable-bottom");
     } else {
       cardContainer.classList.remove("scrollable-bottom");
     }
-    
-    // Remove any existing scroll listener to avoid duplicates
+
     cardContainer.removeEventListener('scroll', scrollHandler);
-    
-    // Add scroll event listener to update indicators dynamically
     cardContainer.addEventListener('scroll', scrollHandler);
   }, 50);
 }
@@ -746,25 +666,24 @@ function updateScrollIndicators() {
 function scrollHandler() {
   var cardContainer = document.getElementById("cardContainer");
   if (!cardContainer) return;
-  
-  // Check if content is actually scrollable
+
   var hasScrollableContent = cardContainer.scrollHeight > cardContainer.clientHeight;
-  
+
   if (!hasScrollableContent) {
     cardContainer.classList.remove("scrollable-top");
     cardContainer.classList.remove("scrollable-bottom");
     return;
   }
-  
-  var isScrollableTop = cardContainer.scrollTop > 5; // Small threshold to avoid flickering
+
+  var isScrollableTop = cardContainer.scrollTop > 5;
   var isScrollableBottom = cardContainer.scrollTop < (cardContainer.scrollHeight - cardContainer.clientHeight - 5);
-  
+
   if (isScrollableTop) {
     cardContainer.classList.add("scrollable-top");
   } else {
     cardContainer.classList.remove("scrollable-top");
   }
-  
+
   if (isScrollableBottom && hasScrollableContent) {
     cardContainer.classList.add("scrollable-bottom");
   } else {
@@ -777,16 +696,15 @@ function initializeCardKeyboardNavigation() {
   document.addEventListener('keydown', function(event) {
     var cardContainer = document.getElementById("cardContainer");
     if (!cardContainer) return;
-    
-    // Only handle scroll keys when the card is the focused element or no specific element is focused
+
     var activeElement = document.activeElement;
     var isInputFocused = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA');
-    
-    if (isInputFocused) return; // Don't interfere with input elements
-    
-    var scrollAmount = 50; // pixels to scroll
+
+    if (isInputFocused) return;
+
+    var scrollAmount = 50;
     var handled = false;
-    
+
     switch(event.key) {
       case 'ArrowUp':
         cardContainer.scrollBy(0, -scrollAmount);
@@ -813,10 +731,9 @@ function initializeCardKeyboardNavigation() {
         handled = true;
         break;
     }
-    
+
     if (handled) {
       event.preventDefault();
-      // Update scroll indicators after scrolling
       updateScrollIndicators();
     }
   });
@@ -824,9 +741,8 @@ function initializeCardKeyboardNavigation() {
 
 
 function showAnswer() {
-  // Record timestamp to prevent accidental presses
   lastShowAnswerTime = Date.now();
-  
+
   if (inErrorReviewMode) {
     displayErrorCard(true);
   } else if (inStarredReviewMode) {
@@ -840,48 +756,44 @@ function showAnswer() {
 function answerCard(wasCorrect) {
   var dueCards = getDueCards();
   if (dueCards.length === 0) return;
-  
+
   var cardIndex = currentCardIndex % dueCards.length;
   var card = dueCards[cardIndex];
-  
+
   if (!wasCorrect) {
     var now = new Date().getTime();
     card.history.push({
       date: now,
       result: false
     });
-    
+
     card.difficulty = 0;
-    card.nextReview = now + (10 * 60 * 1000); // 10 minutes
-    
+    card.nextReview = now + (10 * 60 * 1000);
+
     incorrectAnswers++;
-    
+
     if (!inErrorReviewMode) {
       incorrectCardsQueue.push(card);
     }
   }
-  
+
   currentCardIndex++;
-  
 
   saveDeck();
-  
-  // Check if we're done with regular cards and have errors to review
+
   if (!inErrorReviewMode && currentCardIndex % dueCards.length === 0 && incorrectCardsQueue.length > 0) {
     showErrorReviewPrompt();
   } else {
-    // Display next card
     displayCurrentCard(false);
   }
 }
 
 // Handle answer with interval
 function handleAnswerWithInterval(difficulty) {
-  // Prevent accidental button presses within 500ms of showing answer
   if (Date.now() - lastShowAnswerTime < 500) {
     return;
   }
-  
+
   if (inErrorReviewMode) {
     answerErrorCardWithInterval(difficulty);
   } else if (inStarredReviewMode) {
@@ -889,14 +801,11 @@ function handleAnswerWithInterval(difficulty) {
   } else {
     var dueCards = getDueCards();
     if (dueCards.length === 0) return;
-    
+
     var cardIndex = currentCardIndex % dueCards.length;
     var card = dueCards[cardIndex];
 
-    // For 'again' difficulty, it's effectively the same as marking incorrect
-    // This replaces the separate "Incorrect" button functionality
     if (difficulty === 'again') {
-      // Special handling for "Again" button (previously the "Incorrect" button)
       incorrectAnswers++;
       if (!inErrorReviewMode) {
         incorrectCardsQueue.push(card);
@@ -906,16 +815,14 @@ function handleAnswerWithInterval(difficulty) {
     }
 
     setNextReviewTime(card, difficulty);
-    
+
     currentCardIndex++;
-    
+
     saveDeck();
-    
-    // Check if we're done with regular cards and have errors to review
+
     if (currentCardIndex % dueCards.length === 0 && incorrectCardsQueue.length > 0) {
       showErrorReviewPrompt();
     } else {
-      // Display next card
       displayCurrentCard(false);
     }
   }
@@ -924,20 +831,17 @@ function handleAnswerWithInterval(difficulty) {
 // Handle error card review with intervals
 function answerErrorCardWithInterval(difficulty) {
   if (currentCardIndex >= incorrectCardsQueue.length) return;
-  
+
   var card = incorrectCardsQueue[currentCardIndex];
-  
-  // Calculate next review time based on selected difficulty
+
   setNextReviewTime(card, difficulty);
-  
-  // Mark the card for removal from error queue
+
   incorrectCardsQueue[currentCardIndex] = null;
-  
-  // Move to next card
+
   currentCardIndex++;
-  
+
   saveDeck();
-  
+
   if (currentCardIndex >= incorrectCardsQueue.length) {
     endErrorReview();
   } else {
@@ -948,15 +852,11 @@ function answerErrorCardWithInterval(difficulty) {
 // Handle interval-based answer for starred cards
 function answerStarredCardWithInterval(difficulty) {
   if (currentCardIndex >= starredCardsQueue.length) return;
-  
-  var card = starredCardsQueue[currentCardIndex];
-  
-  // In starred review, we don't affect the regular spaced repetition schedule
-  // This is just for practice, so we just move to the next card
+
   currentCardIndex++;
-  
+
   saveDeck();
-  
+
   if (currentCardIndex >= starredCardsQueue.length) {
     endStarredReview();
   } else {
@@ -967,11 +867,9 @@ function answerStarredCardWithInterval(difficulty) {
 // Change the currently selected level
 function changeLevel(level) {
   currentLevel = level;
-  currentCardIndex = 0; // Reset counter when changing level
+  currentCardIndex = 0;
   updateLevelDisplay();
   displayCurrentCard(false);
-  
-  // Save user preference for level
   saveDeck();
 }
 
@@ -979,15 +877,13 @@ function changeLevel(level) {
 function onPageLoad() {
   log("Application initializing...");
 
-  // Hide review UI immediately; deck overview will be shown after load
-  var cardEl = document.getElementById("cardContainer");
-  var ctrlEl = document.getElementById("controlButtons");
-  if (cardEl) cardEl.style.display = "none";
-  if (ctrlEl) ctrlEl.style.display = "none";
+  // Start hidden; showDeckOverview will reveal mainContainer after font loads
+  var reviewEl = document.getElementById("reviewScreen");
+  var mainEl = document.getElementById("mainContainer");
+  if (reviewEl) reviewEl.style.display = "none";
 
   initializeConfig();
-  
-  // Apply device-specific scaling before anything else
+
   detectDeviceAndSetScaling();
 
   loadLanguageFont();
@@ -1000,33 +896,27 @@ function onPageLoad() {
 
   addViewportListeners();
 
-  if (!loadDeck()) {
-    deck = createDefaultDeck();
-    log("Created new default deck");
-  }
-  
-  // Update menu button states
+  loadDeck();
+
   var starredFilterBtn = document.getElementById("starredFilterBtn");
   var reverseToggleBtn = document.getElementById("reverseToggleBtn");
-  
+
   if (starredFilterBtn && showingStarredOnly) {
     starredFilterBtn.classList.add("active");
   }
-  
+
   if (reverseToggleBtn && isReversedMode) {
     reverseToggleBtn.classList.add("active");
   }
 
   updateProgressDisplay();
-  
-  // Initialize scroll indicators after a short delay to ensure DOM is ready
+
   setTimeout(function() {
     updateScrollIndicators();
   }, 200);
-  
-  // Initialize keyboard navigation for card scrolling
+
   initializeCardKeyboardNavigation();
-  
+
   log("Application initialized");
 }
 
@@ -1034,22 +924,20 @@ function onPageLoad() {
 function updateLevelButtons() {
   var levelsContainer = document.getElementById("levelButtons");
   if (!levelsContainer) return;
-  
+
   while (levelsContainer.children.length > 1) {
     levelsContainer.removeChild(levelsContainer.lastChild);
   }
-  
+
   for (var i = 0; i < appLevels.length; i++) {
     var button = document.createElement("button");
     button.textContent = appLevels[i];
     button.onclick = createLevelChangeHandler(appLevels[i]);
     levelsContainer.appendChild(button);
   }
-  
+
   var lineBreak = document.createElement("br");
   levelsContainer.appendChild(lineBreak);
-  
-  // These buttons are now in the HTML directly
 }
 
 function createLevelChangeHandler(level) {
@@ -1069,15 +957,14 @@ function showResetAllConfirm() {
 function showToast(message, duration) {
   var toast = document.getElementById("toastNotification");
   if (!toast) return;
-  
+
   toast.textContent = message;
-  
-  // Adjust toast position for larger screens
+
   var screenHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
   toast.style.top = (screenHeight > 1000) ? "120px" : "80px";
-  
+
   toast.style.display = "block";
-  
+
   setTimeout(function() {
     toast.style.display = "none";
   }, duration || 2000);
@@ -1090,21 +977,17 @@ function resetProgress() {
     deck.cards[i].nextReview = new Date().getTime();
     deck.cards[i].history = [];
   }
-  
+
   currentCardIndex = 0;
   correctAnswers = 0;
   incorrectAnswers = 0;
-  incorrectCardsQueue = []; 
+  incorrectCardsQueue = [];
   inErrorReviewMode = false;
   starredCardsQueue = [];
   inStarredReviewMode = false;
-  
-  // Hide status message if visible
-  var statusElement = document.getElementById("statusMessage");
-  statusElement.style.display = "none";
-  
-  displayCurrentCard(false);
+
   saveDeck();
+  showDeckOverview();
   showToast("Progress has been reset", 2000);
   log("Progress reset");
 }
@@ -1117,17 +1000,13 @@ function resetAll() {
   incorrectAnswers = 0;
   incorrectCardsQueue = [];
   inErrorReviewMode = false;
-  showingStarredOnly = false; 
+  showingStarredOnly = false;
   isReversedMode = false;
   starredCardsQueue = [];
   inStarredReviewMode = false;
-  
-  // Hide status message if visible
-  var statusElement = document.getElementById("statusMessage");
-  statusElement.style.display = "none";
-  
-  displayCurrentCard(false);
+
   saveDeck();
+  showDeckOverview();
   showToast("All data has been reset", 2000);
   log("Complete reset performed");
 }
@@ -1135,7 +1014,7 @@ function resetAll() {
 // Show prompt to review errors
 function showErrorReviewPrompt() {
   showConfirmation(
-    "You have " + incorrectCardsQueue.length + " incorrect cards. Review them now?", 
+    "You have " + incorrectCardsQueue.length + " incorrect cards. Review them now?",
     startErrorReview
   );
 }
@@ -1144,7 +1023,7 @@ function showErrorReviewPrompt() {
 function showStarredReviewPrompt() {
   var starredCount = getStarredCardsFromCurrentSession().length;
   showConfirmation(
-    "You have " + starredCount + " starred cards from this session. Review them now?", 
+    "You have " + starredCount + " starred cards from this session. Review them now?",
     startStarredReview
   );
 }
@@ -1152,16 +1031,15 @@ function showStarredReviewPrompt() {
 // Start error review mode
 function startErrorReview() {
   if (incorrectCardsQueue.length === 0) return;
-  
+
   inErrorReviewMode = true;
   showToast("Reviewing incorrect cards", 2000);
-  
+
   var statusElement = document.getElementById("statusMessage");
   statusElement.textContent = "Error Review Mode";
   statusElement.style.display = "block";
-  
+
   currentCardIndex = 0;
-  lastViewedCardId = null; // Reset view tracking when starting error review
   displayErrorCard(false);
 }
 
@@ -1172,23 +1050,24 @@ function displayErrorCard(showAnswer) {
   var frontElement = document.getElementById("cardFront");
   var backElement = document.getElementById("cardBack");
   var notesElement = document.getElementById("cardNotes");
+  var dividerElement = document.getElementById("cardDivider");
   var showAnswerBtn = document.getElementById("showAnswerBtn");
   var intervalButtons = document.getElementById("intervalButtons");
-  var starButton = document.getElementById("starButton");
 
   backElement.style.display = "none";
   notesElement.style.display = "none";
-  
+  if (dividerElement) dividerElement.style.display = "none";
+
   if (currentCardIndex >= incorrectCardsQueue.length) {
     endErrorReview();
     return;
   }
-  
+
   cardContainer.style.display = "block";
-  document.getElementById("cardStats").style.display = "block"; // Show stats
-  
+  document.getElementById("cardStats").style.display = "block";
+
   var card = incorrectCardsQueue[currentCardIndex];
-  
+
   levelBadge.style.display = "block";
   levelBadge.textContent = card.level;
 
@@ -1199,44 +1078,41 @@ function displayErrorCard(showAnswer) {
     frontElement.innerHTML = card.front;
     backElement.textContent = card.back;
   }
-  
+
   notesElement.textContent = card.notes || "";
-  
-  // Apply automatic text scaling
+
   applyTextScaling(frontElement, backElement, notesElement);
-  
-  starButton.style.display = "block";
+
   updateStarButton(card.starred);
-  
-  if (!showAnswer) { 
+
+  if (!showAnswer) {
     card.timesViewed = (card.timesViewed || 0) + 1;
     card.lastViewed = new Date().getTime();
   }
-  
+
   updateCardStats(card);
-  
+
   if (showAnswer) {
     backElement.style.display = "block";
     notesElement.style.display = "block";
+    if (dividerElement) dividerElement.style.display = "block";
     showAnswerBtn.style.display = "none";
     intervalButtons.style.display = "block";
     intervalButtons.style.visibility = "visible";
   } else {
     showAnswerBtn.style.display = "block";
-    intervalButtons.style.display = "none"; // Hide completely instead of using visibility
+    intervalButtons.style.display = "none";
   }
-  
+
   updateProgressDisplay();
 }
 
 function answerErrorCard(wasCorrect) {
   if (currentCardIndex >= incorrectCardsQueue.length) return;
-  
-  var card = incorrectCardsQueue[currentCardIndex];
 
   if (!wasCorrect) {
     currentCardIndex++;
-    
+
     if (currentCardIndex >= incorrectCardsQueue.length) {
       endErrorReview();
     } else {
@@ -1247,12 +1123,9 @@ function answerErrorCard(wasCorrect) {
 
 function answerStarredCard(wasCorrect) {
   if (currentCardIndex >= starredCardsQueue.length) return;
-  
-  var card = starredCardsQueue[currentCardIndex];
-  
-  // Always move to the next card in starred review (just for practice)
+
   currentCardIndex++;
-  
+
   if (currentCardIndex >= starredCardsQueue.length) {
     endStarredReview();
   } else {
@@ -1264,9 +1137,9 @@ function endErrorReview() {
   incorrectCardsQueue = incorrectCardsQueue.filter(function(card) {
     return card !== null;
   });
-  
+
   inErrorReviewMode = false;
-  
+
   var statusElement = document.getElementById("statusMessage");
   statusElement.style.display = "none";
 
@@ -1277,7 +1150,6 @@ function endErrorReview() {
     );
   } else {
     showToast("All error cards reviewed successfully!", 2000);
-    // After error review is complete, check for starred cards
     if (getStarredCardsFromCurrentSession().length > 0 && !inStarredReviewMode) {
       showStarredReviewPrompt();
     } else {
@@ -1292,19 +1164,15 @@ function endErrorReview() {
 function startStarredReview() {
   starredCardsQueue = getStarredCardsFromCurrentSession();
   if (starredCardsQueue.length === 0) return;
-  
-  // Store previous filter state to restore after starred review
-  var previouslyShowingStarredOnly = showingStarredOnly;
-  
+
   inStarredReviewMode = true;
   showToast("Reviewing starred cards", 2000);
-  
+
   var statusElement = document.getElementById("statusMessage");
   statusElement.textContent = "Starred Cards Review";
   statusElement.style.display = "block";
-  
+
   currentCardIndex = 0;
-  lastViewedCardId = null; // Reset view tracking when starting starred review
   displayStarredCard(false);
 }
 
@@ -1315,26 +1183,27 @@ function displayStarredCard(showAnswer) {
   var frontElement = document.getElementById("cardFront");
   var backElement = document.getElementById("cardBack");
   var notesElement = document.getElementById("cardNotes");
+  var dividerElement = document.getElementById("cardDivider");
   var showAnswerBtn = document.getElementById("showAnswerBtn");
   var intervalButtons = document.getElementById("intervalButtons");
-  var starButton = document.getElementById("starButton");
 
   backElement.style.display = "none";
   notesElement.style.display = "none";
-  
+  if (dividerElement) dividerElement.style.display = "none";
+
   if (currentCardIndex >= starredCardsQueue.length) {
     endStarredReview();
     return;
   }
-  
+
   cardContainer.style.display = "block";
-  document.getElementById("cardStats").style.display = "block"; // Show stats
+  document.getElementById("cardStats").style.display = "block";
 
   var card = starredCardsQueue[currentCardIndex];
-  
+
   levelBadge.style.display = "block";
   levelBadge.textContent = card.level;
-  
+
   if (isReversedMode) {
     frontElement.innerHTML = card.back;
     backElement.textContent = card.front;
@@ -1342,27 +1211,25 @@ function displayStarredCard(showAnswer) {
     frontElement.innerHTML = card.front;
     backElement.textContent = card.back;
   }
-  
+
   notesElement.textContent = card.notes || "";
-  
-  // Apply automatic text scaling
+
   applyTextScaling(frontElement, backElement, notesElement);
-  
-  starButton.style.display = "block";
+
   updateStarButton(card.starred);
 
   if (!showAnswer) {
-    // Update view statistics for starred review
     card.timesViewed = (card.timesViewed || 0) + 1;
     card.lastViewed = new Date().getTime();
   }
-  
+
   updateCardStats(card);
   updateScrollIndicators();
-  
+
   if (showAnswer) {
     backElement.style.display = "block";
     notesElement.style.display = "block";
+    if (dividerElement) dividerElement.style.display = "block";
     showAnswerBtn.style.display = "none";
     intervalButtons.style.display = "block";
     intervalButtons.style.visibility = "visible";
@@ -1371,29 +1238,27 @@ function displayStarredCard(showAnswer) {
     showAnswerBtn.style.display = "block";
     intervalButtons.style.display = "none";
   }
-  
+
   updateProgressDisplay();
 }
 
 function endStarredReview() {
   inStarredReviewMode = false;
   starredCardsQueue = [];
-  
+
   var statusElement = document.getElementById("statusMessage");
   statusElement.style.display = "none";
-  
+
   showToast("Starred cards review completed!", 2000);
-  
-  // IMPORTANT: Reset the starred filter to ensure regular cards are shown after review
+
   showingStarredOnly = false;
   var starredFilterBtn = document.getElementById("starredFilterBtn");
   if (starredFilterBtn) {
     starredFilterBtn.classList.remove("active");
   }
-  
-  // Reset the card index and refresh the display
+
   currentCardIndex = 0;
-  updateLevelDisplay(); // Update the level display to reflect the filter change
+  updateLevelDisplay();
   displayCurrentCard(false);
   saveDeck();
 }
@@ -1413,7 +1278,7 @@ function handleAnswerCard(wasCorrect) {
 
 function toggleStarCurrentCard() {
   var card = null;
-  
+
   if (inStarredReviewMode) {
     if (currentCardIndex >= starredCardsQueue.length) return;
     card = starredCardsQueue[currentCardIndex];
@@ -1426,13 +1291,13 @@ function toggleStarCurrentCard() {
     var cardIndex = currentCardIndex % dueCards.length;
     card = dueCards[cardIndex];
   }
-  
+
   if (!card) return;
-  
+
   card.starred = !card.starred;
-  
+
   updateStarButton(card.starred);
-  
+
   saveDeck();
   showToast(card.starred ? "Card starred" : "Card unstarred", 1000);
 }
@@ -1440,12 +1305,12 @@ function toggleStarCurrentCard() {
 function updateStarButton(isStarred) {
   var starButton = document.getElementById("starButton");
   if (!starButton) return;
-  
+
   if (isStarred) {
-    starButton.innerHTML = "★";
+    starButton.innerHTML = "&#9733;";
     starButton.classList.add("starred");
   } else {
-    starButton.innerHTML = "☆";
+    starButton.innerHTML = "&#9734;";
     starButton.classList.remove("starred");
   }
 }
@@ -1453,7 +1318,7 @@ function updateStarButton(isStarred) {
 // Toggle showing only starred cards
 function toggleStarredFilter() {
   showingStarredOnly = !showingStarredOnly;
-  currentCardIndex = 0; 
+  currentCardIndex = 0;
   var starredFilterBtn = document.getElementById("starredFilterBtn");
   if (starredFilterBtn) {
     if (showingStarredOnly) {
@@ -1462,17 +1327,16 @@ function toggleStarredFilter() {
       starredFilterBtn.classList.remove("active");
     }
   }
-  
+
   updateLevelDisplay();
   displayCurrentCard(false);
-  
-  // Save user preference for starred filter
+
   saveDeck();
 }
 
 function toggleCardDirection() {
   isReversedMode = !isReversedMode;
-  currentCardIndex = 0; 
+  currentCardIndex = 0;
   var reverseToggleBtn = document.getElementById("reverseToggleBtn");
   if (reverseToggleBtn) {
     if (isReversedMode) {
@@ -1481,39 +1345,39 @@ function toggleCardDirection() {
       reverseToggleBtn.classList.remove("active");
     }
   }
-  
+
   updateDirectionDisplay();
-  
+
   displayCurrentCard(false);
-  
-  // Save user preference for card direction
+
   saveDeck();
-  
-  showToast(isReversedMode ? "Flip: Native → Target" : "Flip: Target → Native", 1500);
+
+  showToast(isReversedMode ? "Flip: Native \u2192 Target" : "Flip: Target \u2192 Native", 1500);
 }
 
 function updateDirectionDisplay() {
   var levelDisplayElement = document.getElementById("levelDisplay");
-  var levelText = "Level: " + (currentLevel === "all" ? "All Levels" : currentLevel);
-  
+  if (!levelDisplayElement) return;
+  var levelText = (currentLevel === "all" ? "All" : currentLevel);
+
   if (showingStarredOnly) {
-    levelText += " (Starred Only)";
+    levelText += " \u2605";
   }
-  
-  levelText += " • " + (isReversedMode ? "Native → Target" : "Target → Native");
-  
+
+  levelText += " \u2022 " + (isReversedMode ? "Native \u2192 Target" : "Target \u2192 Native");
+
   levelDisplayElement.textContent = levelText;
 }
 
 function updateCardStats(card) {
   var statsElement = document.getElementById("cardStats");
   if (!statsElement || !card) return;
-  
+
   var totalViews = card.timesViewed || 0;
   var correctAnswers = 0;
   var incorrectAnswers = 0;
   var lastViewed = card.lastViewed ? new Date(card.lastViewed) : null;
-  
+
   if (card.history && card.history.length > 0) {
     for (var i = 0; i < card.history.length; i++) {
       if (card.history[i].result === true) {
@@ -1531,7 +1395,7 @@ function updateCardStats(card) {
     var diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
     var diffHours = Math.floor(diffMs / (1000 * 60 * 60)) % 24;
     var diffMins = Math.floor(diffMs / (1000 * 60)) % 60;
-    
+
     if (diffDays > 0) {
       lastViewedText = diffDays + " day" + (diffDays !== 1 ? "s" : "") + " ago";
     } else if (diffHours > 0) {
@@ -1542,44 +1406,36 @@ function updateCardStats(card) {
       lastViewedText = "just now";
     }
   }
-  
-  statsElement.innerHTML = "Viewed " + totalViews + " time" + (totalViews !== 1 ? "s" : "") + 
-    " • Last: " + lastViewedText;
+
+  statsElement.innerHTML = "Viewed " + totalViews + " time" + (totalViews !== 1 ? "s" : "") +
+    " \u2022 Last: " + lastViewedText;
 }
 
 // Detect device and set appropriate scaling
 function detectDeviceAndSetScaling() {
   var width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth;
   var height = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
-  
+
   log("Device resolution detected: " + width + "x" + height);
-  
-  // Base scale is for 600x800 (original Kindle)
+
   deviceScaleFactor = 1.0;
-  
-  // Specific handling for Kindle Paperwhite 3 (1072×1448)
+
   if ((width >= 1070 && width <= 1080) && (height >= 1440 && height <= 1460)) {
-    deviceScaleFactor = 0.6; // Special scaling for Paperwhite 3
+    deviceScaleFactor = 0.6;
     log("Kindle Paperwhite 3 detected. Applied special scaling: " + deviceScaleFactor);
   }
-  // High DPI Kindle devices (like Oasis, Scribe)
   else if (width >= 1000 && height >= 1400) {
-    deviceScaleFactor = 0.65; // Reduce the scaling factor for high-res screens
+    deviceScaleFactor = 0.65;
     log("High-res device detected. Applied scaling: " + deviceScaleFactor);
   }
-  // Mid-size Kindle screens
   else if ((width >= 750 && width < 1000) || (height >= 1000 && height < 1400)) {
     deviceScaleFactor = 0.8;
     log("Mid-size device detected. Applied scaling: " + deviceScaleFactor);
   }
-  
-  // Apply scaling to the root element
+
   document.documentElement.style.fontSize = (deviceScaleFactor * 100) + "%";
-  
-  // Set a CSS variable that can be used in CSS files
   document.documentElement.style.setProperty('--device-scale', deviceScaleFactor);
-  
-  // Add a special class for specific device types
+
   var body = document.body;
   body.classList.remove('kindle-base', 'kindle-paperwhite', 'kindle-oasis');
 
@@ -1592,21 +1448,24 @@ function detectDeviceAndSetScaling() {
   }
 }
 
-// ─── Deck Overview ────────────────────────────────────────────────────────────
+// ─── Deck Overview ─────────────────────────────────────────────────────────────
 
 function showDeckOverview() {
   currentScreen = 'overview';
-  var overviewEl = document.getElementById("deckOverview");
-  var cardEl     = document.getElementById("cardContainer");
-  var browseEl   = document.getElementById("browseContainer");
-  var ctrlEl     = document.getElementById("controlButtons");
-  var overviewBtn = document.getElementById("overviewBtn");
 
-  if (overviewEl)  overviewEl.style.display  = "block";
-  if (cardEl)      cardEl.style.display      = "none";
-  if (browseEl)    browseEl.style.display    = "none";
-  if (ctrlEl)      ctrlEl.style.display      = "none";
-  if (overviewBtn) overviewBtn.style.display = "none";
+  var overviewEl   = document.getElementById("deckOverview");
+  var browseEl     = document.getElementById("browseContainer");
+  var manageEl     = document.getElementById("manageContainer");
+  var mainEl       = document.getElementById("mainContainer");
+  var headerEl     = document.getElementById("headerBar");
+  var reviewEl     = document.getElementById("reviewScreen");
+
+  if (reviewEl)  reviewEl.style.display  = "none";
+  if (mainEl)    mainEl.style.display    = "block";
+  if (headerEl)  headerEl.style.display  = "block";
+  if (browseEl)  browseEl.style.display  = "none";
+  if (manageEl)  manageEl.style.display  = "none";
+  if (overviewEl) overviewEl.style.display = "block";
 
   renderOverviewStats();
 }
@@ -1674,44 +1533,67 @@ function renderOverviewStats() {
 
 function startStudy() {
   currentScreen = 'review';
-  hideDeckOverview();
-  var cardEl  = document.getElementById("cardContainer");
-  var ctrlEl  = document.getElementById("controlButtons");
-  var overviewBtn = document.getElementById("overviewBtn");
 
-  if (cardEl)      cardEl.style.display      = "block";
-  if (ctrlEl)      ctrlEl.style.display      = "";
-  if (overviewBtn) overviewBtn.style.display = "";
+  var mainEl   = document.getElementById("mainContainer");
+  var headerEl = document.getElementById("headerBar");
+  var reviewEl = document.getElementById("reviewScreen");
+
+  if (mainEl)   mainEl.style.display   = "none";
+  if (headerEl) headerEl.style.display = "none";
+  if (reviewEl) reviewEl.style.display = "block";
+
+  // Reset card scroll position
+  var cardEl = document.getElementById("cardContainer");
+  if (cardEl) cardEl.scrollTop = 0;
 
   displayCurrentCard(false);
 }
 
-// Navigate to a specific deck/level and start studying from the first card
+// Navigate to a specific deck/level and start studying
 function navigateToDeck(level) {
   currentLevel = level;
   currentCardIndex = 0;
-  
-  // Clear any error review or starred review modes
+
   inErrorReviewMode = false;
   inStarredReviewMode = false;
   incorrectCardsQueue = [];
   starredCardsQueue = [];
   showingStarredOnly = false;
-  
-  // Update UI to reflect filter change
+
   var starredFilterBtn = document.getElementById("starredFilterBtn");
   if (starredFilterBtn) {
     starredFilterBtn.classList.remove("active");
   }
-  
-  // Show a toast notification
+
   showToast("Navigating to " + level, 1500);
-  
-  // Switch to review mode and display the first card
+
   startStudy();
 }
 
-// ─── Card Browser ─────────────────────────────────────────────────────────────
+// ─── Browse Screen (read-only) ─────────────────────────────────────────────────
+
+function showBrowseScreen() {
+  currentScreen = 'browse';
+  browseCurrentPage = 0;
+  browseFilterLevel = 'all';
+
+  var overviewEl = document.getElementById("deckOverview");
+  var browseEl   = document.getElementById("browseContainer");
+  var manageEl   = document.getElementById("manageContainer");
+
+  if (overviewEl) overviewEl.style.display = "none";
+  if (manageEl)   manageEl.style.display   = "none";
+  if (browseEl)   browseEl.style.display   = "block";
+
+  renderBrowseLevelFilter();
+  renderBrowseCardList();
+}
+
+function hideBrowseScreen() {
+  var browseEl = document.getElementById("browseContainer");
+  if (browseEl) browseEl.style.display = "none";
+  showDeckOverview();
+}
 
 function getBrowseCards() {
   var result = [];
@@ -1721,35 +1603,6 @@ function getBrowseCards() {
     result.push({ card: card, deckIndex: i });
   }
   return result;
-}
-
-function showBrowseScreen() {
-  currentScreen = 'browse';
-  browseCurrentPage = 0;
-  browseSelectedIndices = [];
-  browseFilterLevel = 'all';
-
-  var overviewEl  = document.getElementById("deckOverview");
-  var cardEl      = document.getElementById("cardContainer");
-  var ctrlEl      = document.getElementById("controlButtons");
-  var browseEl    = document.getElementById("browseContainer");
-  var overviewBtn = document.getElementById("overviewBtn");
-
-  if (overviewEl)  overviewEl.style.display  = "none";
-  if (cardEl)      cardEl.style.display      = "none";
-  if (ctrlEl)      ctrlEl.style.display      = "none";
-  if (browseEl)    browseEl.style.display    = "block";
-  if (overviewBtn) overviewBtn.style.display = "none";
-
-  renderBrowseLevelFilter();
-  renderBrowseCardList();
-  updateBrowseControls();
-}
-
-function hideBrowseScreen() {
-  var browseEl = document.getElementById("browseContainer");
-  if (browseEl) browseEl.style.display = "none";
-  showDeckOverview();
 }
 
 function renderBrowseLevelFilter() {
@@ -1768,17 +1621,15 @@ function renderBrowseLevelFilter() {
 function setBrowseLevel(level) {
   browseFilterLevel = level;
   browseCurrentPage = 0;
-  browseSelectedIndices = [];
   renderBrowseLevelFilter();
   renderBrowseCardList();
-  updateBrowseControls();
 }
 
 function renderBrowseCardList() {
   var filtered = getBrowseCards();
   var total    = filtered.length;
-  var start    = browseCurrentPage * BROWSE_CARDS_PER_PAGE;
-  var end      = Math.min(start + BROWSE_CARDS_PER_PAGE, total);
+  var start    = browseCurrentPage * CARDS_PER_PAGE;
+  var end      = Math.min(start + CARDS_PER_PAGE, total);
   var pageItems = filtered.slice(start, end);
 
   var statsEl = document.getElementById("browseStats");
@@ -1789,25 +1640,22 @@ function renderBrowseCardList() {
 
   var html = '';
   for (var i = 0; i < pageItems.length; i++) {
-    html += renderBrowseCard(pageItems[i].card, start + i);
+    html += renderBrowseCardItem(pageItems[i].card);
   }
   listEl.innerHTML = html;
 
   renderBrowsePagination(total);
 }
 
-function renderBrowseCard(card, browseIdx) {
-  var isSelected  = browseSelectedIndices.indexOf(browseIdx) !== -1;
+function renderBrowseCardItem(card) {
   var isSuspended = card.suspended === true;
   var isStarred   = card.starred === true;
 
   var itemClass = 'browseCardItem';
-  if (isSelected)  itemClass += ' selected';
   if (isSuspended) itemClass += ' suspended';
 
-  var checkbox    = isSelected ? '&#9745;' : '&#9744;';
-  var suspBadge   = isSuspended ? ' <span class="suspendedIndicator">[susp]</span>' : '';
-  var starBadge   = isStarred   ? ' <span class="starBadge">&#9733;</span>' : '';
+  var suspBadge = isSuspended ? ' <span class="suspendedIndicator">[susp]</span>' : '';
+  var starBadge = isStarred   ? ' <span class="starBadge">&#9733;</span>' : '';
 
   var tagHtml = '';
   if (card.tags && card.tags.length > 0) {
@@ -1816,7 +1664,146 @@ function renderBrowseCard(card, browseIdx) {
     }
   }
 
-  return '<div class="' + itemClass + '" onclick="toggleCardSelection(' + browseIdx + ')">' +
+  return '<div class="' + itemClass + '">' +
+    '<div class="browseCardHeader">' +
+      '<span class="browseCardLevel">' + (card.level || '') + '</span>' +
+      suspBadge + starBadge +
+    '</div>' +
+    '<div class="browseCardFront">' + (card.front || '') + '</div>' +
+    '<div class="browseCardBack">' + (card.back || '') + '</div>' +
+    (tagHtml ? '<div class="browseCardTags">' + tagHtml + '</div>' : '') +
+  '</div>';
+}
+
+function browsePrevPage() {
+  if (browseCurrentPage > 0) {
+    browseCurrentPage--;
+    renderBrowseCardList();
+  }
+}
+
+function browseNextPage() {
+  var total   = getBrowseCards().length;
+  var maxPage = Math.ceil(total / CARDS_PER_PAGE) - 1;
+  if (browseCurrentPage < maxPage) {
+    browseCurrentPage++;
+    renderBrowseCardList();
+  }
+}
+
+function renderBrowsePagination(total) {
+  var el = document.getElementById("browsePagination");
+  if (!el) return;
+  var totalPages     = Math.max(1, Math.ceil(total / CARDS_PER_PAGE));
+  var currentPageNum = browseCurrentPage + 1;
+  var html = '<button onclick="browsePrevPage()"' + (browseCurrentPage === 0 ? ' disabled' : '') + '>&#9664; Prev</button>';
+  html += '<span class="currentPage">Page ' + currentPageNum + ' / ' + totalPages + '</span>';
+  html += '<button onclick="browseNextPage()"' + (currentPageNum >= totalPages ? ' disabled' : '') + '>Next &#9654;</button>';
+  el.innerHTML = html;
+}
+
+// ─── Manage Screen (selection / tagging) ──────────────────────────────────────
+
+function showManageScreen() {
+  currentScreen = 'manage';
+  manageCurrentPage = 0;
+  manageSelectedIndices = [];
+  manageFilterLevel = 'all';
+
+  var overviewEl = document.getElementById("deckOverview");
+  var browseEl   = document.getElementById("browseContainer");
+  var manageEl   = document.getElementById("manageContainer");
+
+  if (overviewEl) overviewEl.style.display = "none";
+  if (browseEl)   browseEl.style.display   = "none";
+  if (manageEl)   manageEl.style.display   = "block";
+
+  renderManageLevelFilter();
+  renderManageCardList();
+  updateManageControls();
+}
+
+function hideManageScreen() {
+  var manageEl = document.getElementById("manageContainer");
+  if (manageEl) manageEl.style.display = "none";
+  showDeckOverview();
+}
+
+function getManageCards() {
+  var result = [];
+  for (var i = 0; i < deck.cards.length; i++) {
+    var card = deck.cards[i];
+    if (manageFilterLevel !== 'all' && card.level !== manageFilterLevel) continue;
+    result.push({ card: card, deckIndex: i });
+  }
+  return result;
+}
+
+function renderManageLevelFilter() {
+  var el = document.getElementById("manageLevelFilter");
+  if (!el) return;
+  var html = '<button class="browseLevelBtn' + (manageFilterLevel === 'all' ? ' active' : '') +
+             '" onclick="setManageLevel(\'all\')">All</button>';
+  for (var i = 0; i < appLevels.length; i++) {
+    var lvl = appLevels[i];
+    html += '<button class="browseLevelBtn' + (manageFilterLevel === lvl ? ' active' : '') +
+            '" onclick="setManageLevel(\'' + lvl + '\')">' + lvl + '</button>';
+  }
+  el.innerHTML = html;
+}
+
+function setManageLevel(level) {
+  manageFilterLevel = level;
+  manageCurrentPage = 0;
+  manageSelectedIndices = [];
+  renderManageLevelFilter();
+  renderManageCardList();
+  updateManageControls();
+}
+
+function renderManageCardList() {
+  var filtered = getManageCards();
+  var total    = filtered.length;
+  var start    = manageCurrentPage * CARDS_PER_PAGE;
+  var end      = Math.min(start + CARDS_PER_PAGE, total);
+  var pageItems = filtered.slice(start, end);
+
+  var statsEl = document.getElementById("manageStats");
+  if (statsEl) statsEl.textContent = total + " cards";
+
+  var listEl = document.getElementById("manageCardList");
+  if (!listEl) return;
+
+  var html = '';
+  for (var i = 0; i < pageItems.length; i++) {
+    html += renderManageCardItem(pageItems[i].card, start + i);
+  }
+  listEl.innerHTML = html;
+
+  renderManagePagination(total);
+}
+
+function renderManageCardItem(card, manageIdx) {
+  var isSelected  = manageSelectedIndices.indexOf(manageIdx) !== -1;
+  var isSuspended = card.suspended === true;
+  var isStarred   = card.starred === true;
+
+  var itemClass = 'browseCardItem';
+  if (isSelected)  itemClass += ' selected';
+  if (isSuspended) itemClass += ' suspended';
+
+  var checkbox  = isSelected ? '&#9745;' : '&#9744;';
+  var suspBadge = isSuspended ? ' <span class="suspendedIndicator">[susp]</span>' : '';
+  var starBadge = isStarred   ? ' <span class="starBadge">&#9733;</span>' : '';
+
+  var tagHtml = '';
+  if (card.tags && card.tags.length > 0) {
+    for (var t = 0; t < card.tags.length; t++) {
+      tagHtml += '<span class="tagBadge">' + card.tags[t] + '</span>';
+    }
+  }
+
+  return '<div class="' + itemClass + '" onclick="toggleManageCardSelection(' + manageIdx + ')">' +
     '<div class="browseCardHeader">' +
       '<span class="browseCardCheckbox">' + checkbox + '</span>' +
       '<span class="browseCardLevel">' + (card.level || '') + '</span>' +
@@ -1828,66 +1815,64 @@ function renderBrowseCard(card, browseIdx) {
   '</div>';
 }
 
-function toggleCardSelection(browseIdx) {
-  var pos = browseSelectedIndices.indexOf(browseIdx);
+function toggleManageCardSelection(manageIdx) {
+  var pos = manageSelectedIndices.indexOf(manageIdx);
   if (pos === -1) {
-    browseSelectedIndices.push(browseIdx);
+    manageSelectedIndices.push(manageIdx);
   } else {
-    browseSelectedIndices.splice(pos, 1);
+    manageSelectedIndices.splice(pos, 1);
   }
-  renderBrowseCardList();
-  updateBrowseControls();
+  renderManageCardList();
+  updateManageControls();
 }
 
-function selectAllCards() {
-  var filtered = getBrowseCards();
-  var start = browseCurrentPage * BROWSE_CARDS_PER_PAGE;
-  var end   = Math.min(start + BROWSE_CARDS_PER_PAGE, filtered.length);
+function selectAllManageCards() {
+  var filtered = getManageCards();
+  var start = manageCurrentPage * CARDS_PER_PAGE;
+  var end   = Math.min(start + CARDS_PER_PAGE, filtered.length);
   for (var i = start; i < end; i++) {
-    if (browseSelectedIndices.indexOf(i) === -1) {
-      browseSelectedIndices.push(i);
+    if (manageSelectedIndices.indexOf(i) === -1) {
+      manageSelectedIndices.push(i);
     }
   }
-  renderBrowseCardList();
-  updateBrowseControls();
+  renderManageCardList();
+  updateManageControls();
 }
 
-function deselectAllCards() {
-  browseSelectedIndices = [];
-  renderBrowseCardList();
-  updateBrowseControls();
+function deselectAllManageCards() {
+  manageSelectedIndices = [];
+  renderManageCardList();
+  updateManageControls();
 }
 
 function toggleSuspendSelected() {
-  if (browseSelectedIndices.length === 0) return;
-  var filtered = getBrowseCards();
+  if (manageSelectedIndices.length === 0) return;
+  var filtered = getManageCards();
 
-  // If any selected card is unsuspended → suspend all; otherwise unsuspend all
   var hasUnsuspended = false;
-  for (var i = 0; i < browseSelectedIndices.length; i++) {
-    var idx = browseSelectedIndices[i];
+  for (var i = 0; i < manageSelectedIndices.length; i++) {
+    var idx = manageSelectedIndices[i];
     if (idx < filtered.length && !filtered[idx].card.suspended) {
       hasUnsuspended = true;
       break;
     }
   }
-  for (var i = 0; i < browseSelectedIndices.length; i++) {
-    var idx = browseSelectedIndices[i];
+  for (var i = 0; i < manageSelectedIndices.length; i++) {
+    var idx = manageSelectedIndices[i];
     if (idx < filtered.length) {
       filtered[idx].card.suspended = hasUnsuspended;
     }
   }
   saveDeck();
-  renderBrowseCardList();
-  updateBrowseControls();
+  renderManageCardList();
+  updateManageControls();
   showToast(hasUnsuspended ? "Cards suspended" : "Cards unsuspended", 1500);
 }
 
 function addTagToSelected() {
-  if (browseSelectedIndices.length === 0) return;
-  var filtered = getBrowseCards();
+  if (manageSelectedIndices.length === 0) return;
+  var filtered = getManageCards();
 
-  // Collect existing tags from the whole deck
   var existingTags = [];
   for (var i = 0; i < deck.cards.length; i++) {
     var tags = deck.cards[i].tags || [];
@@ -1901,8 +1886,8 @@ function addTagToSelected() {
   if (!tag || tag.trim() === "") return;
   tag = tag.trim();
 
-  for (var i = 0; i < browseSelectedIndices.length; i++) {
-    var idx = browseSelectedIndices[i];
+  for (var i = 0; i < manageSelectedIndices.length; i++) {
+    var idx = manageSelectedIndices[i];
     if (idx < filtered.length) {
       var card = filtered[idx].card;
       if (!card.tags) card.tags = [];
@@ -1910,20 +1895,20 @@ function addTagToSelected() {
     }
   }
   saveDeck();
-  renderBrowseCardList();
+  renderManageCardList();
   showToast('Tag "' + tag + '" added', 1500);
 }
 
 function removeTagFromSelected() {
-  if (browseSelectedIndices.length === 0) return;
-  var filtered = getBrowseCards();
+  if (manageSelectedIndices.length === 0) return;
+  var filtered = getManageCards();
 
   var tag = prompt("Enter tag to remove:");
   if (!tag || tag.trim() === "") return;
   tag = tag.trim();
 
-  for (var i = 0; i < browseSelectedIndices.length; i++) {
-    var idx = browseSelectedIndices[i];
+  for (var i = 0; i < manageSelectedIndices.length; i++) {
+    var idx = manageSelectedIndices[i];
     if (idx < filtered.length) {
       var card = filtered[idx].card;
       if (card.tags) {
@@ -1932,35 +1917,35 @@ function removeTagFromSelected() {
     }
   }
   saveDeck();
-  renderBrowseCardList();
+  renderManageCardList();
   showToast('Tag "' + tag + '" removed', 1500);
 }
 
-function browsePrevPage() {
-  if (browseCurrentPage > 0) {
-    browseCurrentPage--;
-    browseSelectedIndices = [];
-    renderBrowseCardList();
-    updateBrowseControls();
+function managePrevPage() {
+  if (manageCurrentPage > 0) {
+    manageCurrentPage--;
+    manageSelectedIndices = [];
+    renderManageCardList();
+    updateManageControls();
   }
 }
 
-function browseNextPage() {
-  var total   = getBrowseCards().length;
-  var maxPage = Math.ceil(total / BROWSE_CARDS_PER_PAGE) - 1;
-  if (browseCurrentPage < maxPage) {
-    browseCurrentPage++;
-    browseSelectedIndices = [];
-    renderBrowseCardList();
-    updateBrowseControls();
+function manageNextPage() {
+  var total   = getManageCards().length;
+  var maxPage = Math.ceil(total / CARDS_PER_PAGE) - 1;
+  if (manageCurrentPage < maxPage) {
+    manageCurrentPage++;
+    manageSelectedIndices = [];
+    renderManageCardList();
+    updateManageControls();
   }
 }
 
-function updateBrowseControls() {
-  var count       = browseSelectedIndices.length;
-  var suspendBtn  = document.getElementById("suspendBtn");
+function updateManageControls() {
+  var count        = manageSelectedIndices.length;
+  var suspendBtn   = document.getElementById("suspendBtn");
   var unsuspendBtn = document.getElementById("unsuspendBtn");
-  var addTagBtn   = document.getElementById("addTagBtn");
+  var addTagBtn    = document.getElementById("addTagBtn");
   var removeTagBtn = document.getElementById("removeTagBtn");
 
   if (count === 0) {
@@ -1971,11 +1956,10 @@ function updateBrowseControls() {
     return;
   }
 
-  // Show suspend vs unsuspend based on selected cards' state
-  var filtered = getBrowseCards();
+  var filtered = getManageCards();
   var allSuspended = true;
   for (var i = 0; i < count; i++) {
-    var idx = browseSelectedIndices[i];
+    var idx = manageSelectedIndices[i];
     if (idx < filtered.length && !filtered[idx].card.suspended) {
       allSuspended = false;
       break;
@@ -1988,13 +1972,13 @@ function updateBrowseControls() {
   if (removeTagBtn) removeTagBtn.style.display = "";
 }
 
-function renderBrowsePagination(total) {
-  var el = document.getElementById("browsePagination");
+function renderManagePagination(total) {
+  var el = document.getElementById("managePagination");
   if (!el) return;
-  var totalPages     = Math.max(1, Math.ceil(total / BROWSE_CARDS_PER_PAGE));
-  var currentPageNum = browseCurrentPage + 1;
-  var html = '<button onclick="browsePrevPage()"' + (browseCurrentPage === 0 ? ' disabled' : '') + '>&#9664; Prev</button>';
+  var totalPages     = Math.max(1, Math.ceil(total / CARDS_PER_PAGE));
+  var currentPageNum = manageCurrentPage + 1;
+  var html = '<button onclick="managePrevPage()"' + (manageCurrentPage === 0 ? ' disabled' : '') + '>&#9664; Prev</button>';
   html += '<span class="currentPage">Page ' + currentPageNum + ' / ' + totalPages + '</span>';
-  html += '<button onclick="browseNextPage()"' + (currentPageNum >= totalPages ? ' disabled' : '') + '>Next &#9654;</button>';
+  html += '<button onclick="manageNextPage()"' + (currentPageNum >= totalPages ? ' disabled' : '') + '>Next &#9654;</button>';
   el.innerHTML = html;
 }
