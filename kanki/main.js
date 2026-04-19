@@ -13,6 +13,11 @@ var lastShowAnswerTime = 0;
 var starredCardsQueue = [];
 var inStarredReviewMode = false;
 
+// Stable reference to the due cards array for the current session.
+// Prevents card-jump bugs when getDueCards() re-queries and returns
+// a different array (e.g., after cards are rescheduled mid-session).
+var currentSessionDueCards = [];
+
 // Manage screen state (selection / tagging)
 var manageCurrentPage = 0;
 var CARDS_PER_PAGE = 10;
@@ -531,10 +536,12 @@ function getStarredCardsFromCurrentSession() {
   return starredCards;
 }
 
-// Display current card
-function displayCurrentCard(showAnswer) {
+// Display current card.
+// The 'card' parameter, if provided, is the exact card to display,
+// preventing the card-jump bug that occurs when getDueCards() returns
+// a different array (e.g., after cards are rescheduled mid-session).
+function displayCurrentCard(showAnswer, card) {
   var dueCards = getDueCards();
-
   var cardContainer = document.getElementById("cardContainer");
   var levelBadge = document.getElementById("levelBadge");
   var frontElement = document.getElementById("cardFront");
@@ -569,28 +576,31 @@ function displayCurrentCard(showAnswer) {
   cardContainer.style.display = "block";
   document.getElementById("cardStats").style.display = "block";
 
-  var card = dueCards[currentCardIndex % dueCards.length];
+  // Use the passed card if provided, otherwise compute from dueCards.
+  // When a card is passed, we guarantee the same card is shown regardless
+  // of whether the due list has changed since the last call.
+  var displayCard = card || dueCards[currentCardIndex % dueCards.length];
 
   levelBadge.style.display = "block";
-  levelBadge.textContent = card.level;
+  levelBadge.textContent = displayCard.level;
 
-  frontElement.innerHTML = resolveImagePathsInHTML(card.front);
-  backElement.innerHTML = resolveImagePathsInHTML(card.back);
+  frontElement.innerHTML = resolveImagePathsInHTML(displayCard.front);
+  backElement.innerHTML = resolveImagePathsInHTML(displayCard.back);
 
-  notesElement.innerHTML = resolveImagePathsInHTML(card.notes || "");
+  notesElement.innerHTML = resolveImagePathsInHTML(displayCard.notes || "");
 
   applyTextScaling(frontElement, backElement, notesElement);
 
-  updateStarButton(card.starred);
+  updateStarButton(displayCard.starred);
 
   if (!showAnswer) {
-    card.timesViewed = (card.timesViewed || 0) + 1;
-    card.lastViewed = new Date().getTime();
+    displayCard.timesViewed = (displayCard.timesViewed || 0) + 1;
+    displayCard.lastViewed = new Date().getTime();
     // Don't save on every view — answer handlers call saveDeck() and Kindle
     // is too slow to serialize 6000+ cards on each card display.
   }
 
-  updateCardStats(card);
+  updateCardStats(displayCard);
   updateScrollIndicators();
 
   if (showAnswer) {
@@ -878,7 +888,12 @@ function answerCard(wasCorrect) {
   if (!inErrorReviewMode && currentCardIndex % dueCards.length === 0 && incorrectCardsQueue.length > 0) {
     showErrorReviewPrompt();
   } else {
-    displayCurrentCard(false);
+    // Pass the next card directly to prevent card-jump on reshow
+    var nextCard = null;
+    if (currentCardIndex < dueCards.length) {
+      nextCard = dueCards[currentCardIndex];
+    }
+    displayCurrentCard(false, nextCard);
   }
 }
 
@@ -917,7 +932,12 @@ function handleAnswerWithInterval(difficulty) {
     if (currentCardIndex % dueCards.length === 0 && incorrectCardsQueue.length > 0) {
       showErrorReviewPrompt();
     } else {
-      displayCurrentCard(false);
+      // Pass the next card directly to prevent card-jump on reshow
+      var nextCard = null;
+      if (currentCardIndex < dueCards.length) {
+        nextCard = dueCards[currentCardIndex];
+      }
+      displayCurrentCard(false, nextCard);
     }
   }
 }
