@@ -480,15 +480,13 @@ h1 {
 
 /* Star button styles */
 .starButton {
-  position: absolute;
-  top: 10px;
-  left: 10px;
+  position: relative;
   background: none;
   border: none;
   font-size: 1.5em;
   cursor: pointer;
-  z-index: 10;
   padding: 5px;
+  color: inherit;
 }
 
 .starButton.starred {
@@ -500,9 +498,8 @@ h1 {
   color: white;
 }
 
-#reverseToggleBtn.active {
-  background-color: #555;
-  color: white;
+#reverseToggleBtn {
+  display: none;
 }
 
 /* Browse screen styles */
@@ -670,9 +667,9 @@ h1 {
 
 /* ── Deck Overview styles ─────────────────────────────────────── */
 .deckOverview {
-  width: 85%;
-  max-width: 500px;
-  margin: 30px auto;
+  width: 95%;
+  max-width: 95%;
+  margin: 10px auto;
   padding: 20px;
   background-color: #fff;
   border: 1px solid #000;
@@ -726,7 +723,11 @@ h1 {
 
 .overviewLevelName {
   font-weight: bold;
-  width: 40%;
+  width: 45%;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .overviewLevelName a {
@@ -977,6 +978,45 @@ h1 {
   border: 1px solid #000;
   display: inline-block;
   cursor: pointer;
+}
+
+/* ── Image support in cards ───────────────────────────────────── */
+.cardFront img, .cardBack img, .cardNotes img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 4px auto;
+}
+
+/* Image occlusion layout */
+.occlusionWrapper {
+  position: relative;
+  display: block;
+  text-align: center;
+}
+
+.occlusionWrapper img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+#occlusionCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.occlusionHeader {
+  font-size: 0.7em;
+  font-weight: normal;
+  text-align: center;
+  margin-bottom: 8px;
+  color: #444;
 }
 
 /* Browse card item without checkbox column */

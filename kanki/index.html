@@ -68,7 +68,7 @@
 </head>
 
 <body onload="onPageLoad()">
-  <div id="log" style="display:none;"></div>
+  <div id="log" style="display:block;max-height:150px;overflow-y:auto;font-size:0.6em;padding:4px;background:#f9f9f9;border-bottom:1px solid #ddd;"></div>
 
   <!-- Header Bar (shown on overview, browse, manage screens) -->
   <div id="headerBar">
@@ -80,14 +80,8 @@
       </div>
     </div>
     <div class="menuBar">
-      <div id="levelButtons" class="menuSection">
-        <button onclick="changeLevel('all')">All Levels</button>
-        <!-- Other level buttons added dynamically -->
-      </div>
-      <div class="menuDivider"></div>
       <div id="toolButtons" class="menuSection">
-        <button id="starredFilterBtn" onclick="toggleStarredFilter()">&#9733; Star</button>
-        <button id="reverseToggleBtn" onclick="toggleCardDirection()">&#8596; Flip</button>
+        <button id="starredFilterBtn" onclick="toggleStarredFilter()">&#9733; Practice Starred</button>
       </div>
     </div>
   </div>

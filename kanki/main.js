@@ -8,7 +8,6 @@ var fontLoaded = false;
 var incorrectCardsQueue = [];
 var inErrorReviewMode = false;
 var showingStarredOnly = false;
-var isReversedMode = false;
 var deviceScaleFactor = 1.0;
 var lastShowAnswerTime = 0;
 var starredCardsQueue = [];
@@ -31,19 +30,107 @@ function initializeConfig() {
   if (typeof KANKI_CONFIG !== 'undefined') {
     appLanguage = KANKI_CONFIG.language || appLanguage;
     appLevels = KANKI_CONFIG.levels || appLevels;
+    // Sort levels alphabetically (case-insensitive)
+    appLevels.sort(function(a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
     log("Loaded custom configuration: " + appLanguage + " with levels: " + appLevels.join(", "));
   } else {
     log("Using default configuration");
   }
 }
 
-// The logging function
+// Truncate level name if longer than 32 chars: first 29 chars + "..."
+function truncateLevel(name) {
+  if (name.length > 32) {
+    return name.substring(0, 29) + '...';
+  }
+  return name;
+}
+
+// The logging function — writes to a visible div on-screen
 function log(logStuff) {
   var logElement = document.getElementById("log");
   if (logElement) {
     logElement.innerHTML += "<p>" + logStuff + "</p>";
   }
-  console.log(logStuff);
+  if (window.console && console.log) {
+    console.log("[KAnki] " + logStuff);
+  }
+}
+
+// Global image error handler — logs failures and replaces broken images with a fallback
+function setupImageErrorHandling() {
+  document.addEventListener('error', function(e) {
+    if (e.target && e.target.tagName === 'IMG') {
+      var src = e.target.src || '';
+      log("Image load failed: " + src.substring(0, 120));
+      e.target.onerror = null;
+      e.target.style.display = 'none';
+      var placeholder = document.createElement('div');
+      placeholder.style.cssText = 'text-align:center;color:#999;padding:20px;border:1px dashed #ccc;margin:4px 0;';
+      placeholder.textContent = '[Image not found: ' + src.substring(src.lastIndexOf('/') + 1) + ']';
+      e.target.parentNode.insertBefore(placeholder, e.target);
+    }
+  }, true);
+}
+
+// Image cache to avoid re-fetching the same file
+var _imageCache = {};
+
+// Detect the MIME type from a file extension
+function getMimeType(filename) {
+  var ext = '';
+  var lastDot = filename.lastIndexOf('.');
+  if (lastDot >= 0) {
+    ext = filename.substring(lastDot).toLowerCase();
+  }
+  switch (ext) {
+    case '.jpg': case '.jpeg': return 'image/jpeg';
+    case '.png':  return 'image/png';
+    case '.gif':  return 'image/gif';
+    case '.webp': return 'image/webp';
+    default:      return 'image/jpeg';
+  }
+}
+
+// Load an image from the images/ directory using the SDK fetchFile
+// and convert it to a base64 data URI for the <img> tag
+function loadImageAsDataUri(imagePath, callback) {
+  // imagePath is like "images/filename.webp"
+  if (_imageCache[imagePath]) {
+    callback(_imageCache[imagePath]);
+    return;
+  }
+
+  // Use SDK fetchFile to load the image
+  // For text files this works fine, for binary images we need to handle corruption
+  fetchFile(imagePath, 5000, false).then(function(data) {
+    try {
+      var mime = getMimeType(imagePath);
+      // Convert the loaded data to base64
+      // The data from fetchFile may have issues with binary files
+      // Try using btoa on the string data
+      var b64 = btoa(unescape(encodeURIComponent(data)));
+      var dataUri = 'data:' + mime + ';base64,' + b64;
+      _imageCache[imagePath] = dataUri;
+      callback(dataUri);
+    } catch (e) {
+      log("Image conversion error for " + imagePath + ": " + e.message);
+      callback(null);
+    }
+  }).catch(function(err) {
+    log("Image fetch failed for " + imagePath + ": " + err);
+    callback(null);
+  });
+}
+
+// Resolve image paths in HTML — for Kindle, we use the SDK to load images
+// and convert them to base64 data URIs at runtime
+function resolveImagePathsInHTML(html) {
+  if (!html) return html;
+  // The HTML contains <img src="images/filename"> references
+  // We need to load each image via SDK and convert to data URI
+  // For now, return the HTML as-is and let the error handler catch failures
+  return html;
 }
 
 function loadLanguageFont() {
@@ -415,6 +502,18 @@ function getDueCards() {
   return dueCards;
 }
 
+// Get all starred cards across all decks/levels
+function getAllStarredCards() {
+  var starredCards = [];
+  for (var i = 0; i < deck.cards.length; i++) {
+    var card = deck.cards[i];
+    if (card.starred === true && !card.suspended) {
+      starredCards.push(card);
+    }
+  }
+  return starredCards;
+}
+
 // Get starred cards that have been reviewed in the current session
 function getStarredCardsFromCurrentSession() {
   var starredCards = [];
@@ -475,15 +574,10 @@ function displayCurrentCard(showAnswer) {
   levelBadge.style.display = "block";
   levelBadge.textContent = card.level;
 
-  if (isReversedMode) {
-    frontElement.innerHTML = card.back;
-    backElement.textContent = card.front;
-  } else {
-    frontElement.innerHTML = card.front;
-    backElement.textContent = card.back;
-  }
+  frontElement.innerHTML = resolveImagePathsInHTML(card.front);
+  backElement.innerHTML = resolveImagePathsInHTML(card.back);
 
-  notesElement.textContent = card.notes || "";
+  notesElement.innerHTML = resolveImagePathsInHTML(card.notes || "");
 
   applyTextScaling(frontElement, backElement, notesElement);
 
@@ -623,7 +717,7 @@ function updateLevelDisplay() {
     displayText += " \u2605";
   }
 
-  displayText += " \u2022 " + (isReversedMode ? "Native\u2192Target" : "Target\u2192Native");
+  displayText += " \u2022 Target\u2192Native";
 
   levelDisplayElement.textContent = displayText;
 }
@@ -864,15 +958,6 @@ function answerStarredCardWithInterval(difficulty) {
   }
 }
 
-// Change the currently selected level
-function changeLevel(level) {
-  currentLevel = level;
-  currentCardIndex = 0;
-  updateLevelDisplay();
-  displayCurrentCard(false);
-  saveDeck();
-}
-
 // Initialize app on page load
 function onPageLoad() {
   log("Application initializing...");
@@ -892,8 +977,6 @@ function onPageLoad() {
 
   detectViewportAndAdjust();
 
-  updateLevelButtons();
-
   addViewportListeners();
 
   loadDeck();
@@ -905,8 +988,8 @@ function onPageLoad() {
     starredFilterBtn.classList.add("active");
   }
 
-  if (reverseToggleBtn && isReversedMode) {
-    reverseToggleBtn.classList.add("active");
+  if (reverseToggleBtn) {
+    reverseToggleBtn.style.display = "none";
   }
 
   updateProgressDisplay();
@@ -917,33 +1000,9 @@ function onPageLoad() {
 
   initializeCardKeyboardNavigation();
 
+  setupImageErrorHandling();
+
   log("Application initialized");
-}
-
-// Update level buttons dynamically based on appLevels
-function updateLevelButtons() {
-  var levelsContainer = document.getElementById("levelButtons");
-  if (!levelsContainer) return;
-
-  while (levelsContainer.children.length > 1) {
-    levelsContainer.removeChild(levelsContainer.lastChild);
-  }
-
-  for (var i = 0; i < appLevels.length; i++) {
-    var button = document.createElement("button");
-    button.textContent = appLevels[i];
-    button.onclick = createLevelChangeHandler(appLevels[i]);
-    levelsContainer.appendChild(button);
-  }
-
-  var lineBreak = document.createElement("br");
-  levelsContainer.appendChild(lineBreak);
-}
-
-function createLevelChangeHandler(level) {
-  return function() {
-    changeLevel(level);
-  };
 }
 
 function showResetProgressConfirm() {
@@ -1001,7 +1060,6 @@ function resetAll() {
   incorrectCardsQueue = [];
   inErrorReviewMode = false;
   showingStarredOnly = false;
-  isReversedMode = false;
   starredCardsQueue = [];
   inStarredReviewMode = false;
 
@@ -1071,15 +1129,10 @@ function displayErrorCard(showAnswer) {
   levelBadge.style.display = "block";
   levelBadge.textContent = card.level;
 
-  if (isReversedMode) {
-    frontElement.innerHTML = card.back;
-    backElement.textContent = card.front;
-  } else {
-    frontElement.innerHTML = card.front;
-    backElement.textContent = card.back;
-  }
+  frontElement.innerHTML = resolveImagePathsInHTML(card.front);
+  backElement.innerHTML = resolveImagePathsInHTML(card.back);
 
-  notesElement.textContent = card.notes || "";
+  notesElement.innerHTML = resolveImagePathsInHTML(card.notes || "");
 
   applyTextScaling(frontElement, backElement, notesElement);
 
@@ -1204,15 +1257,10 @@ function displayStarredCard(showAnswer) {
   levelBadge.style.display = "block";
   levelBadge.textContent = card.level;
 
-  if (isReversedMode) {
-    frontElement.innerHTML = card.back;
-    backElement.textContent = card.front;
-  } else {
-    frontElement.innerHTML = card.front;
-    backElement.textContent = card.back;
-  }
+  frontElement.innerHTML = resolveImagePathsInHTML(card.front);
+  backElement.innerHTML = resolveImagePathsInHTML(card.back);
 
-  notesElement.textContent = card.notes || "";
+  notesElement.innerHTML = resolveImagePathsInHTML(card.notes || "");
 
   applyTextScaling(frontElement, backElement, notesElement);
 
@@ -1278,25 +1326,45 @@ function handleAnswerCard(wasCorrect) {
 
 function toggleStarCurrentCard() {
   var card = null;
+  var cardIndex = -1;
 
   if (inStarredReviewMode) {
     if (currentCardIndex >= starredCardsQueue.length) return;
     card = starredCardsQueue[currentCardIndex];
+    cardIndex = currentCardIndex;
   } else if (inErrorReviewMode) {
     if (currentCardIndex >= incorrectCardsQueue.length) return;
     card = incorrectCardsQueue[currentCardIndex];
   } else {
     var dueCards = getDueCards();
     if (dueCards.length === 0) return;
-    var cardIndex = currentCardIndex % dueCards.length;
-    card = dueCards[cardIndex];
+    var cardIdx = currentCardIndex % dueCards.length;
+    card = dueCards[cardIdx];
   }
 
   if (!card) return;
 
+  var wasStarred = card.starred;
   card.starred = !card.starred;
 
   updateStarButton(card.starred);
+
+  // If unstarred during starred review mode, remove from queue and show next card
+  if (inStarredReviewMode && !card.starred && wasStarred) {
+    // Card was starred, now unstarred - remove from queue
+    starredCardsQueue.splice(cardIndex, 1);
+    currentCardIndex = Math.min(cardIndex, starredCardsQueue.length - 1);
+    if (starredCardsQueue.length === 0) {
+      endStarredReview();
+      return;
+    }
+    // Update progress display and show next card
+    updateProgressDisplay();
+    displayStarredCard(false);
+    showToast("Card unstarred - removed from review queue", 1500);
+    saveDeck();
+    return;
+  }
 
   saveDeck();
   showToast(card.starred ? "Card starred" : "Card unstarred", 1000);
@@ -1317,56 +1385,37 @@ function updateStarButton(isStarred) {
 
 // Toggle showing only starred cards
 function toggleStarredFilter() {
-  showingStarredOnly = !showingStarredOnly;
+  // Start cross-deck starred review mode
+  if (inStarredReviewMode) {
+    endStarredReview();
+    return;
+  }
+
+  var allStarred = getAllStarredCards();
+  if (allStarred.length === 0) {
+    showToast("No starred cards found", 2000);
+    return;
+  }
+
+  showingStarredOnly = true;
+  starredCardsQueue = allStarred;
+  inStarredReviewMode = true;
   currentCardIndex = 0;
+
   var starredFilterBtn = document.getElementById("starredFilterBtn");
   if (starredFilterBtn) {
-    if (showingStarredOnly) {
-      starredFilterBtn.classList.add("active");
-    } else {
-      starredFilterBtn.classList.remove("active");
-    }
+    starredFilterBtn.classList.add("active");
   }
 
-  updateLevelDisplay();
-  displayCurrentCard(false);
+  showToast("Reviewing " + allStarred.length + " starred cards", 2000);
+
+  var statusElement = document.getElementById("statusMessage");
+  statusElement.textContent = "Starred Cards Review";
+  statusElement.style.display = "block";
+
+  displayStarredCard(false);
 
   saveDeck();
-}
-
-function toggleCardDirection() {
-  isReversedMode = !isReversedMode;
-  currentCardIndex = 0;
-  var reverseToggleBtn = document.getElementById("reverseToggleBtn");
-  if (reverseToggleBtn) {
-    if (isReversedMode) {
-      reverseToggleBtn.classList.add("active");
-    } else {
-      reverseToggleBtn.classList.remove("active");
-    }
-  }
-
-  updateDirectionDisplay();
-
-  displayCurrentCard(false);
-
-  saveDeck();
-
-  showToast(isReversedMode ? "Flip: Native \u2192 Target" : "Flip: Target \u2192 Native", 1500);
-}
-
-function updateDirectionDisplay() {
-  var levelDisplayElement = document.getElementById("levelDisplay");
-  if (!levelDisplayElement) return;
-  var levelText = (currentLevel === "all" ? "All" : currentLevel);
-
-  if (showingStarredOnly) {
-    levelText += " \u2605";
-  }
-
-  levelText += " \u2022 " + (isReversedMode ? "Native \u2192 Target" : "Target \u2192 Native");
-
-  levelDisplayElement.textContent = levelText;
 }
 
 function updateCardStats(card) {
@@ -1521,8 +1570,9 @@ function renderOverviewStats() {
     for (var k = 0; k < appLevels.length; k++) {
       var lvlKey = appLevels[k];
       var stats = levelStats[lvlKey] || { due: 0, total: 0 };
+      var displayLvl = truncateLevel(lvlKey);
       html += '<tr class="overviewLevelRow">' +
-              '<td class="overviewLevelName"><a href="#" onclick="navigateToDeck(\'' + lvlKey + '\'); return false;">' + lvlKey + '</a></td>' +
+              '<td class="overviewLevelName"><a href="#" onclick="navigateToDeck(\'' + lvlKey + '\'); return false;">' + displayLvl + '</a></td>' +
               '<td class="overviewLevelStats">' + stats.due + ' due / ' + stats.total + ' total</td>' +
               '</tr>';
     }
@@ -1612,8 +1662,9 @@ function renderBrowseLevelFilter() {
              '" onclick="setBrowseLevel(\'all\')">All</button>';
   for (var i = 0; i < appLevels.length; i++) {
     var lvl = appLevels[i];
+    var displayLvl = truncateLevel(lvl);
     html += '<button class="browseLevelBtn' + (browseFilterLevel === lvl ? ' active' : '') +
-            '" onclick="setBrowseLevel(\'' + lvl + '\')">' + lvl + '</button>';
+            '" onclick="setBrowseLevel(\'' + lvl + '\')">' + displayLvl + '</button>';
   }
   el.innerHTML = html;
 }
@@ -1650,6 +1701,7 @@ function renderBrowseCardList() {
 function renderBrowseCardItem(card) {
   var isSuspended = card.suspended === true;
   var isStarred   = card.starred === true;
+  var isIO        = card.type === 'image-occlusion';
 
   var itemClass = 'browseCardItem';
   if (isSuspended) itemClass += ' suspended';
@@ -1664,13 +1716,16 @@ function renderBrowseCardItem(card) {
     }
   }
 
+  var frontText = isIO ? '[Image Occlusion]' : (card.front || '');
+  var backText  = isIO ? (card.front || '')  : (card.back  || '');
+
   return '<div class="' + itemClass + '">' +
     '<div class="browseCardHeader">' +
       '<span class="browseCardLevel">' + (card.level || '') + '</span>' +
       suspBadge + starBadge +
     '</div>' +
-    '<div class="browseCardFront">' + (card.front || '') + '</div>' +
-    '<div class="browseCardBack">' + (card.back || '') + '</div>' +
+    '<div class="browseCardFront">' + frontText + '</div>' +
+    '<div class="browseCardBack">' + backText + '</div>' +
     (tagHtml ? '<div class="browseCardTags">' + tagHtml + '</div>' : '') +
   '</div>';
 }
@@ -1746,8 +1801,9 @@ function renderManageLevelFilter() {
              '" onclick="setManageLevel(\'all\')">All</button>';
   for (var i = 0; i < appLevels.length; i++) {
     var lvl = appLevels[i];
+    var displayLvl = truncateLevel(lvl);
     html += '<button class="browseLevelBtn' + (manageFilterLevel === lvl ? ' active' : '') +
-            '" onclick="setManageLevel(\'' + lvl + '\')">' + lvl + '</button>';
+            '" onclick="setManageLevel(\'' + lvl + '\')">' + displayLvl + '</button>';
   }
   el.innerHTML = html;
 }
@@ -1787,6 +1843,7 @@ function renderManageCardItem(card, manageIdx) {
   var isSelected  = manageSelectedIndices.indexOf(manageIdx) !== -1;
   var isSuspended = card.suspended === true;
   var isStarred   = card.starred === true;
+  var isIO        = card.type === 'image-occlusion';
 
   var itemClass = 'browseCardItem';
   if (isSelected)  itemClass += ' selected';
@@ -1803,14 +1860,17 @@ function renderManageCardItem(card, manageIdx) {
     }
   }
 
+  var frontText = isIO ? '[Image Occlusion]' : (card.front || '');
+  var backText  = isIO ? (card.front || '')  : (card.back  || '');
+
   return '<div class="' + itemClass + '" onclick="toggleManageCardSelection(' + manageIdx + ')">' +
     '<div class="browseCardHeader">' +
       '<span class="browseCardCheckbox">' + checkbox + '</span>' +
       '<span class="browseCardLevel">' + (card.level || '') + '</span>' +
       suspBadge + starBadge +
     '</div>' +
-    '<div class="browseCardFront">' + (card.front || '') + '</div>' +
-    '<div class="browseCardBack">' + (card.back || '') + '</div>' +
+    '<div class="browseCardFront">' + frontText + '</div>' +
+    '<div class="browseCardBack">' + backText + '</div>' +
     (tagHtml ? '<div class="browseCardTags">' + tagHtml + '</div>' : '') +
   '</div>';
 }
