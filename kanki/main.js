@@ -13,12 +13,276 @@ var lastShowAnswerTime = 0;
 var starredCardsQueue = [];
 var inStarredReviewMode = false;
 
+// Debounced save: batch saves to avoid blocking the UI on every answer.
+var saveDeckTimeout = null;
+var pendingSave = false;
+
 // Stable reference to the due cards array for the current session.
 // Prevents card-jump bugs when getDueCards() re-queries and returns
 // a different array (e.g., after cards are rescheduled mid-session).
 var currentSessionDueCards = [];
 
-// Manage screen state (selection / tagging)
+// ── Scheduling Configuration ──────────────────────────────────────────────────────
+
+// Default scheduling configuration (SM-2)
+var defaultSchedConfig = {
+  newPerDay: 20,
+  reviewsPerDay: 200,
+  learnSteps: [1, 10],
+  relearnSteps: [10],
+  graduatingIntervalGood: 1,
+  graduatingIntervalEasy: 4,
+  initialEase: 2.5,
+  easyMultiplier: 1.3,
+  hardMultiplier: 1.2,
+  maximumReviewInterval: 36500,
+  lapseMultiplier: 0.0,
+  minimumLapseInterval: 1,
+  leechThreshold: 8,
+  leechAction: 'tag',
+  fuzzEnabled: true,
+  fuzzFactor: 0.15,
+  buryNew: false,
+  buryReviews: false,
+};
+
+// Anki-inspired presets
+var schedPresets = {
+  default: {
+    newPerDay: 20, reviewsPerDay: 200,
+    learnSteps: [1, 10], relearnSteps: [10],
+    graduatingIntervalGood: 1, graduatingIntervalEasy: 4,
+    initialEase: 2.5, easyMultiplier: 1.3, hardMultiplier: 1.2,
+    maximumReviewInterval: 36500,
+  },
+  fast: {
+    newPerDay: 50, reviewsPerDay: 500,
+    learnSteps: [1, 10], relearnSteps: [10],
+    graduatingIntervalGood: 1, graduatingIntervalEasy: 2,
+    initialEase: 2.65, easyMultiplier: 1.25, hardMultiplier: 1.2,
+    maximumReviewInterval: 36500,
+  },
+  thorough: {
+    newPerDay: 10, reviewsPerDay: 100,
+    learnSteps: [1, 10], relearnSteps: [10],
+    graduatingIntervalGood: 2, graduatingIntervalEasy: 7,
+    initialEase: 2.5, easyMultiplier: 1.3, hardMultiplier: 1.2,
+    maximumReviewInterval: 36500,
+  },
+  beginner: {
+    newPerDay: 20, reviewsPerDay: 200,
+    learnSteps: [1, 10], relearnSteps: [10],
+    graduatingIntervalGood: 1, graduatingIntervalEasy: 4,
+    initialEase: 2.65, easyMultiplier: 1.25, hardMultiplier: 1.2,
+    maximumReviewInterval: 36500,
+  },
+  intermediate: {
+    newPerDay: 20, reviewsPerDay: 200,
+    learnSteps: [1, 10], relearnSteps: [10],
+    graduatingIntervalGood: 1, graduatingIntervalEasy: 4,
+    initialEase: 2.5, easyMultiplier: 1.3, hardMultiplier: 1.2,
+    maximumReviewInterval: 36500,
+  },
+  advanced: {
+    newPerDay: 20, reviewsPerDay: 200,
+    learnSteps: [1, 10], relearnSteps: [10],
+    graduatingIntervalGood: 1, graduatingIntervalEasy: 4,
+    initialEase: 2.5, easyMultiplier: 1.3, hardMultiplier: 1.2,
+    maximumReviewInterval: 36500,
+  },
+};
+
+var SCHED_CONFIG = null; // Loaded from localStorage on init
+var currentPresetName = 'default';
+
+// ── Scheduling Config Persistence ─────────────────────────────────────────────
+
+function loadSchedConfig() {
+  try {
+    var saved = localStorage.getItem('kanki_sched_config');
+    if (saved) {
+      SCHED_CONFIG = JSON.parse(saved);
+      // Fill in any missing fields with defaults
+      for (var key in defaultSchedConfig) {
+        if (SCHED_CONFIG[key] === undefined) {
+          SCHED_CONFIG[key] = defaultSchedConfig[key];
+        }
+      }
+      log("Loaded scheduling config from localStorage");
+      return;
+    }
+  } catch (e) {
+    log("Error loading sched config: " + e.message);
+  }
+  // Use defaults
+  SCHED_CONFIG = JSON.parse(JSON.stringify(defaultSchedConfig));
+  currentPresetName = 'default';
+  log("Using default scheduling config");
+}
+
+function saveSchedConfig() {
+  try {
+    localStorage.setItem('kanki_sched_config', JSON.stringify(SCHED_CONFIG));
+    log("Scheduling config saved to localStorage");
+  } catch (e) {
+    log("Error saving sched config: " + e.message);
+  }
+}
+
+function clonePreset() {
+  var name = prompt("Enter a name for the cloned preset:");
+  if (!name || name.trim() === "") return;
+  name = name.trim();
+  schedPresets[name] = JSON.parse(JSON.stringify(SCHED_CONFIG));
+  currentPresetName = name;
+  log("Created preset: " + name);
+}
+
+// ── Card Migration (legacy difficulty → reviewState) ─────────────────────────
+
+function migrateCard(card) {
+  if (card.reviewState) return card; // already migrated
+
+  var ease = card.difficulty > 0 ? 2.5 : 2.5;
+  card.reviewState = {
+    scheduledDays: Math.max(0, card.difficulty),
+    elapsedDays: 0,
+    easeFactor: ease,
+    lapses: 0,
+    leeched: false
+  };
+  return card;
+}
+
+function migrateAllCards() {
+  var migrated = 0;
+  for (var i = 0; i < deck.cards.length; i++) {
+    if (deck.cards[i].reviewState === undefined) {
+      migrateCard(deck.cards[i]);
+      migrated++;
+    }
+  }
+  if (migrated > 0) {
+    log("Migrated " + migrated + " cards to new scheduling model");
+  }
+}
+
+// ── SM-2 Scheduling (replaces old calculateNextReview / setNextReviewTime) ────
+
+// Compute interval in days using SM-2 formulas
+function computeSM2Interval(card, button) {
+  var rs = card.reviewState;
+  var cfg = SCHED_CONFIG;
+  var now = new Date().getTime();
+
+  // Days since card was last scheduled (including lateness)
+  var daysLate = 0;
+  if (rs.scheduledDays > 0) {
+    var scheduledMs = rs.scheduledDays * 24 * 60 * 60 * 1000;
+    var lastReviewMs = card.lastViewed || now;
+    var daysSinceReview = (now - lastReviewMs) / (24 * 60 * 60 * 1000);
+    daysLate = Math.max(0, daysSinceReview - rs.scheduledDays);
+  }
+
+  var currentInterval = rs.scheduledDays;
+
+  switch (button) {
+    case 'again':
+      // Lapse: ease decreases, interval resets to relearn step
+      rs.easeFactor = Math.max(1.3, rs.easeFactor - 0.2);
+      rs.lapses++;
+      var lapseInterval = Math.max(cfg.minimumLapseInterval,
+        Math.round(currentInterval * cfg.lapseMultiplier));
+      // Store the relearn interval for when the card graduates
+      card._lapseInterval = lapseInterval;
+      // Card goes into learning — set scheduledDays to a relearn step
+      // We'll set it to the first relearn step (in days)
+      if (cfg.relearnSteps && cfg.relearnSteps.length > 0) {
+        rs.scheduledDays = Math.max(1, Math.ceil(cfg.relearnSteps[0] / 1440));
+      } else {
+        rs.scheduledDays = 1;
+      }
+      rs.elapsedDays = 0;
+      return rs.scheduledDays;
+
+    case 'hard':
+      rs.easeFactor = Math.max(1.3, rs.easeFactor - 0.15);
+      var hardInterval = Math.max(currentInterval * cfg.hardMultiplier,
+        currentInterval + 1);
+      rs.scheduledDays = Math.min(cfg.maximumReviewInterval,
+        Math.max(1, Math.round(hardInterval)));
+      rs.elapsedDays += 1;
+      return rs.scheduledDays;
+
+    case 'good':
+      var goodInterval;
+      if (currentInterval === 0) {
+        // First good answer: use graduating interval
+        goodInterval = cfg.graduatingIntervalGood;
+      } else {
+        // Subsequent: (currentInterval + daysLate/2) * easeFactor
+        goodInterval = (currentInterval + daysLate / 2) * rs.easeFactor;
+      }
+      rs.scheduledDays = Math.min(cfg.maximumReviewInterval,
+        Math.max(1, Math.round(goodInterval)));
+      rs.elapsedDays += 1;
+      return rs.scheduledDays;
+
+    case 'easy':
+      rs.easeFactor += 0.15;
+      var easyInterval;
+      if (currentInterval === 0) {
+        easyInterval = cfg.graduatingIntervalEasy;
+      } else {
+        easyInterval = (currentInterval + daysLate) * rs.easeFactor * cfg.easyMultiplier;
+      }
+      // Easy is at least good + 1
+      var easyGood;
+      if (currentInterval === 0) {
+        easyGood = cfg.graduatingIntervalGood + 1;
+      } else {
+        easyGood = Math.round((currentInterval + daysLate / 2) * rs.easeFactor) + 1;
+      }
+      rs.scheduledDays = Math.min(cfg.maximumReviewInterval,
+        Math.max(easyGood, Math.round(easyInterval)));
+      rs.elapsedDays += 1;
+      return rs.scheduledDays;
+
+    default:
+      return rs.scheduledDays;
+  }
+}
+
+// Apply fuzz to an interval (±fuzzFactor as fraction)
+function applyFuzz(interval) {
+  var cfg = SCHED_CONFIG;
+  if (!cfg.fuzzEnabled || interval <= 1) return interval;
+  var fuzzRange = Math.max(1, Math.round(interval * cfg.fuzzFactor));
+  var jitter = Math.floor(Math.random() * (2 * fuzzRange + 1)) - fuzzRange;
+  return Math.max(1, interval + jitter);
+}
+
+// Set next review time using SM-2 with current config
+function setNextReviewTime(card, button) {
+  var now = new Date().getTime();
+
+  card.history.push({
+    date: now,
+    result: true,
+    difficulty: button
+  });
+
+  var interval = computeSM2Interval(card, button);
+  interval = applyFuzz(interval);
+
+  // Convert scheduledDays back to a timestamp
+  var nextReviewMs = now + (interval * 24 * 60 * 60 * 1000);
+  card.nextReview = nextReviewMs;
+
+  return card;
+}
+
+// ── Manage screen state (selection / tagging)
 var manageCurrentPage = 0;
 var CARDS_PER_PAGE = 10;
 var manageSelectedIndices = [];
@@ -233,7 +497,7 @@ function handleViewportChange() {
     detectDeviceAndSetScaling();
     initializeFixedHeights();
     if (currentScreen === 'review') {
-      displayCurrentCard(false);
+      displayCurrentCard(currentSessionDueCards, false);
     }
     updateProgressDisplay();
     updateLevelDisplay();
@@ -340,6 +604,21 @@ function saveDeck() {
   }
 }
 
+// Save a single card's state to localStorage without serializing the entire deck.
+// Called from review paths to avoid the ~500ms+ freeze of JSON.stringify(6000 cards).
+// Uses card.id as key; cards without an id get one assigned.
+function saveCard(card) {
+  if (!deck || !card) return;
+  if (!card.id) card.id = 'card_' + deck.cards.indexOf(card);
+  try {
+    var cards = JSON.parse(localStorage.getItem('kanki_deck_cards') || '{}');
+    cards[card.id] = card;
+    localStorage.setItem('kanki_deck_cards', JSON.stringify(cards));
+  } catch (e) {
+    log("Error saving card: " + e.message);
+  }
+}
+
 // Load deck from localStorage or create a new one if none exists
 function loadDeck() {
   try {
@@ -347,6 +626,36 @@ function loadDeck() {
     if (savedDeck) {
       deck = JSON.parse(savedDeck);
       log("Loaded saved deck with " + deck.cards.length + " cards");
+
+      // Merge per-card incremental saves (from saveCard()) into the main deck.
+      // This ensures card progress is preserved even when saveDeck() wasn't called.
+      try {
+        var cardSaves = JSON.parse(localStorage.getItem('kanki_deck_cards') || '{}');
+        var merged = 0;
+        for (var i = 0; i < deck.cards.length; i++) {
+          var c = deck.cards[i];
+          if (cardSaves[c.id]) {
+            // Merge saved fields back into the card object
+            var saved = cardSaves[c.id];
+            c.difficulty = saved.difficulty;
+            c.nextReview = saved.nextReview;
+            c.history = saved.history;
+            c.starred = saved.starred;
+            c.timesViewed = saved.timesViewed;
+            c.lastViewed = saved.lastViewed;
+            c.suspended = saved.suspended;
+            c.tags = saved.tags;
+            if (saved.reviewState) c.reviewState = saved.reviewState;
+            merged++;
+          }
+        }
+        if (merged > 0) {
+          log("Merged " + merged + " per-card saves into deck");
+        }
+      } catch (e) {
+        log("Error merging per-card saves: " + e.message);
+      }
+
       for (var i = 0; i < deck.cards.length; i++) {
         if (deck.cards[i].suspended === undefined) deck.cards[i].suspended = false;
         if (!deck.cards[i].tags) deck.cards[i].tags = [];
@@ -441,7 +750,7 @@ function calculateNextReview(card, wasCorrect) {
     card.nextReview = now + (10 * 60 * 1000);
   }
 
-  saveDeck();
+  saveCard(card);
 
   return card;
 }
@@ -537,11 +846,12 @@ function getStarredCardsFromCurrentSession() {
 }
 
 // Display current card.
-// The 'card' parameter, if provided, is the exact card to display,
-// preventing the card-jump bug that occurs when getDueCards() returns
-// a different array (e.g., after cards are rescheduled mid-session).
-function displayCurrentCard(showAnswer, card) {
-  var dueCards = getDueCards();
+// 'dueCards' is the stable reference to the session's due cards array.
+// This is never re-queried during the session — it is computed once at
+// session start (like Anki's CardQueues). Prevents card-jump when cards
+// are rescheduled mid-session.
+// 'showAnswer' and 'card' are as before; 'card' overrides dueCards[index].
+function displayCurrentCard(dueCards, showAnswer, card) {
   var cardContainer = document.getElementById("cardContainer");
   var levelBadge = document.getElementById("levelBadge");
   var frontElement = document.getElementById("cardFront");
@@ -555,7 +865,7 @@ function displayCurrentCard(showAnswer, card) {
   notesElement.style.display = "none";
   if (dividerElement) dividerElement.style.display = "none";
 
-  if (dueCards.length === 0) {
+  if (!dueCards || dueCards.length === 0) {
     cardContainer.style.display = "block";
     frontElement.innerHTML = "<div style='font-size: 0.7em; font-weight: normal; text-align: center; padding: 20px;'><p>No cards due for review!</p><p>Great job!</p></div>";
     levelBadge.style.display = "none";
@@ -576,9 +886,7 @@ function displayCurrentCard(showAnswer, card) {
   cardContainer.style.display = "block";
   document.getElementById("cardStats").style.display = "block";
 
-  // Use the passed card if provided, otherwise compute from dueCards.
-  // When a card is passed, we guarantee the same card is shown regardless
-  // of whether the due list has changed since the last call.
+  // Use the passed card if provided, otherwise index into the stable dueCards array.
   var displayCard = card || dueCards[currentCardIndex % dueCards.length];
 
   levelBadge.style.display = "block";
@@ -852,7 +1160,7 @@ function showAnswer() {
   } else if (inStarredReviewMode) {
     displayStarredCard(true);
   } else {
-    displayCurrentCard(true);
+    displayCurrentCard(currentSessionDueCards, true);
   }
 }
 
@@ -883,17 +1191,16 @@ function answerCard(wasCorrect) {
 
   currentCardIndex++;
 
-  saveDeck();
+  saveCard(card);
 
   if (!inErrorReviewMode && currentCardIndex % dueCards.length === 0 && incorrectCardsQueue.length > 0) {
     showErrorReviewPrompt();
   } else {
-    // Pass the next card directly to prevent card-jump on reshow
     var nextCard = null;
-    if (currentCardIndex < dueCards.length) {
-      nextCard = dueCards[currentCardIndex];
+    if (currentCardIndex < currentSessionDueCards.length) {
+      nextCard = currentSessionDueCards[currentCardIndex];
     }
-    displayCurrentCard(false, nextCard);
+    displayCurrentCard(currentSessionDueCards, false, nextCard);
   }
 }
 
@@ -908,11 +1215,11 @@ function handleAnswerWithInterval(difficulty) {
   } else if (inStarredReviewMode) {
     answerStarredCardWithInterval(difficulty);
   } else {
-    var dueCards = getDueCards();
-    if (dueCards.length === 0) return;
+    if (!currentSessionDueCards || currentSessionDueCards.length === 0) return;
 
-    var cardIndex = currentCardIndex % dueCards.length;
-    var card = dueCards[cardIndex];
+    var sessionLen = currentSessionDueCards.length;
+    var cardIndex = currentCardIndex % sessionLen;
+    var card = currentSessionDueCards[cardIndex];
 
     if (difficulty === 'again') {
       incorrectAnswers++;
@@ -927,17 +1234,16 @@ function handleAnswerWithInterval(difficulty) {
 
     currentCardIndex++;
 
-    saveDeck();
+    saveCard(card);
 
-    if (currentCardIndex % dueCards.length === 0 && incorrectCardsQueue.length > 0) {
+    if (currentCardIndex % sessionLen === 0 && incorrectCardsQueue.length > 0) {
       showErrorReviewPrompt();
     } else {
-      // Pass the next card directly to prevent card-jump on reshow
       var nextCard = null;
-      if (currentCardIndex < dueCards.length) {
-        nextCard = dueCards[currentCardIndex];
+      if (currentCardIndex < currentSessionDueCards.length) {
+        nextCard = currentSessionDueCards[currentCardIndex];
       }
-      displayCurrentCard(false, nextCard);
+      displayCurrentCard(currentSessionDueCards, false, nextCard);
     }
   }
 }
@@ -954,7 +1260,7 @@ function answerErrorCardWithInterval(difficulty) {
 
   currentCardIndex++;
 
-  saveDeck();
+  saveCard(card);
 
   if (currentCardIndex >= incorrectCardsQueue.length) {
     endErrorReview();
@@ -967,9 +1273,10 @@ function answerErrorCardWithInterval(difficulty) {
 function answerStarredCardWithInterval(difficulty) {
   if (currentCardIndex >= starredCardsQueue.length) return;
 
+  var card = starredCardsQueue[currentCardIndex];
   currentCardIndex++;
 
-  saveDeck();
+  saveCard(card);
 
   if (currentCardIndex >= starredCardsQueue.length) {
     endStarredReview();
@@ -1000,6 +1307,10 @@ function onPageLoad() {
   addViewportListeners();
 
   loadDeck();
+
+  // Load scheduling config and migrate cards to new model
+  loadSchedConfig();
+  migrateAllCards();
 
   var starredFilterBtn = document.getElementById("starredFilterBtn");
   var reverseToggleBtn = document.getElementById("reverseToggleBtn");
@@ -1227,10 +1538,10 @@ function endErrorReview() {
       showStarredReviewPrompt();
     } else {
       currentCardIndex = 0;
-      displayCurrentCard(false);
+      displayCurrentCard(currentSessionDueCards, false);
     }
   }
-  saveDeck();
+  saveDeck(); // endErrorReview: save full deck after error review session
 }
 
 // Start starred cards review mode
@@ -1327,8 +1638,8 @@ function endStarredReview() {
 
   currentCardIndex = 0;
   updateLevelDisplay();
-  displayCurrentCard(false);
-  saveDeck();
+  displayCurrentCard(currentSessionDueCards, false);
+  saveDeck(); // endStarredReview: save full deck after starred review session
 }
 
 function handleAnswerCard(wasCorrect) {
@@ -1382,11 +1693,11 @@ function toggleStarCurrentCard() {
     updateProgressDisplay();
     displayStarredCard(false);
     showToast("Card unstarred - removed from review queue", 1500);
-    saveDeck();
+    saveCard(card);
     return;
   }
 
-  saveDeck();
+  saveCard(card);
   showToast(card.starred ? "Card starred" : "Card unstarred", 1000);
 }
 
@@ -1612,11 +1923,17 @@ function startStudy() {
   if (headerEl) headerEl.style.display = "none";
   if (reviewEl) reviewEl.style.display = "block";
 
+  // Compute the due list once at session start (like Anki's CardQueues).
+  // This stable reference is used throughout the session to prevent card-jump.
+  currentSessionDueCards = getDueCards();
+
   // Reset card scroll position
   var cardEl = document.getElementById("cardContainer");
   if (cardEl) cardEl.scrollTop = 0;
 
-  displayCurrentCard(false);
+  currentCardIndex = 0;
+  incorrectCardsQueue = [];
+  displayCurrentCard(currentSessionDueCards, false);
 }
 
 // Navigate to a specific deck/level and start studying
@@ -2062,3 +2379,218 @@ function renderManagePagination(total) {
   html += '<button onclick="manageNextPage()"' + (currentPageNum >= totalPages ? ' disabled' : '') + '>Next &#9654;</button>';
   el.innerHTML = html;
 }
+
+// ─── Options Screen ─────────────────────────────────────────────────────────────
+
+function onOptionsPageLoad() {
+  log("Options page loading...");
+  loadSchedConfig();
+  populateOptionsForm();
+}
+
+function showOptionsScreen() {
+  currentScreen = 'options';
+  var overviewEl = document.getElementById("deckOverview");
+  var mainEl = document.getElementById("mainContainer");
+  var headerEl = document.getElementById("headerBar");
+  if (overviewEl) overviewEl.style.display = "none";
+  if (mainEl) mainEl.style.display = "none";
+  if (headerEl) headerEl.style.display = "none";
+  loadSchedConfig();
+  populateOptionsForm();
+}
+
+function hideOptionsScreen() {
+  currentScreen = 'overview';
+  var overviewEl = document.getElementById("deckOverview");
+  var mainEl = document.getElementById("mainContainer");
+  var headerEl = document.getElementById("headerBar");
+  if (mainEl) mainEl.style.display = "block";
+  if (headerEl) headerEl.style.display = "block";
+  if (overviewEl) overviewEl.style.display = "block";
+}
+
+function populateOptionsForm() {
+  if (!SCHED_CONFIG) return;
+  var el = function(id) { return document.getElementById(id); };
+  if (el('optNewPerDay')) el('optNewPerDay').value = SCHED_CONFIG.newPerDay;
+  if (el('optReviewsPerDay')) el('optReviewsPerDay').value = SCHED_CONFIG.reviewsPerDay;
+  if (el('optLearnSteps')) el('optLearnSteps').value = SCHED_CONFIG.learnSteps.join(', ');
+  if (el('optRelearnSteps')) el('optRelearnSteps').value = SCHED_CONFIG.relearnSteps.join(', ');
+  if (el('optGraduatingInterval')) el('optGraduatingInterval').value = SCHED_CONFIG.graduatingIntervalGood;
+  if (el('optEasyInterval')) el('optEasyInterval').value = SCHED_CONFIG.graduatingIntervalEasy;
+  if (el('optInitialEase')) el('optInitialEase').value = SCHED_CONFIG.initialEase;
+  if (el('optEasyMultiplier')) el('optEasyMultiplier').value = SCHED_CONFIG.easyMultiplier;
+  if (el('optHardMultiplier')) el('optHardMultiplier').value = SCHED_CONFIG.hardMultiplier;
+  if (el('optMaxInterval')) el('optMaxInterval').value = SCHED_CONFIG.maximumReviewInterval;
+  if (el('optAgainStep')) el('optAgainStep').value = SCHED_CONFIG.learnSteps[0] || 10;
+}
+
+function readOptionsForm() {
+  var el = function(id) { return document.getElementById(id); };
+  var val = function(id) { return parseFloat(el(id).value) || 0; };
+  var valStr = function(id) { return el(id).value.trim(); };
+
+  SCHED_CONFIG.newPerDay = Math.max(1, Math.min(999, val('optNewPerDay')));
+  SCHED_CONFIG.reviewsPerDay = Math.max(1, Math.min(9999, val('optReviewsPerDay')));
+
+  // Parse comma-separated step lists
+  var parseSteps = function(str) {
+    var parts = str.split(',').map(function(s) { return parseInt(s.trim(), 10); });
+    return parts.filter(function(n) { return !isNaN(n) && n > 0; });
+  };
+  SCHED_CONFIG.learnSteps = parseSteps(valStr('optLearnSteps'));
+  if (SCHED_CONFIG.learnSteps.length === 0) SCHED_CONFIG.learnSteps = [1, 10];
+  SCHED_CONFIG.relearnSteps = parseSteps(valStr('optRelearnSteps'));
+  if (SCHED_CONFIG.relearnSteps.length === 0) SCHED_CONFIG.relearnSteps = [10];
+
+  SCHED_CONFIG.graduatingIntervalGood = Math.max(1, Math.min(365, val('optGraduatingInterval')));
+  SCHED_CONFIG.graduatingIntervalEasy = Math.max(1, Math.min(3650, val('optEasyInterval')));
+  SCHED_CONFIG.initialEase = Math.max(1.3, Math.min(5, val('optInitialEase')));
+  SCHED_CONFIG.easyMultiplier = Math.max(1.0, Math.min(3, val('optEasyMultiplier')));
+  SCHED_CONFIG.hardMultiplier = Math.max(1.0, Math.min(3, val('optHardMultiplier')));
+  SCHED_CONFIG.maximumReviewInterval = Math.max(1, Math.min(99999, val('optMaxInterval')));
+  SCHED_CONFIG.learnSteps[0] = Math.max(1, Math.min(1440, Math.round(val('optAgainStep'))));
+}
+
+function saveOptions() {
+  readOptionsForm();
+  saveSchedConfig();
+  showToast("Options saved", 1500);
+  log("Options saved: " + JSON.stringify(SCHED_CONFIG));
+  hideOptionsScreen();
+}
+
+function applyPreset(name) {
+  if (!schedPresets[name]) return;
+  var preset = schedPresets[name];
+  var el = function(id) { return document.getElementById(id); };
+
+  // Apply preset values
+  SCHED_CONFIG.newPerDay = preset.newPerDay;
+  SCHED_CONFIG.reviewsPerDay = preset.reviewsPerDay;
+  SCHED_CONFIG.learnSteps = preset.learnSteps.slice();
+  SCHED_CONFIG.relearnSteps = preset.relearnSteps.slice();
+  SCHED_CONFIG.graduatingIntervalGood = preset.graduatingIntervalGood;
+  SCHED_CONFIG.graduatingIntervalEasy = preset.graduatingIntervalEasy;
+  SCHED_CONFIG.initialEase = preset.initialEase;
+  SCHED_CONFIG.easyMultiplier = preset.easyMultiplier;
+  SCHED_CONFIG.hardMultiplier = preset.hardMultiplier;
+  SCHED_CONFIG.maximumReviewInterval = preset.maximumReviewInterval;
+  // Also apply defaults for fields not in preset
+  for (var key in defaultSchedConfig) {
+    if (!(key in preset)) {
+      SCHED_CONFIG[key] = defaultSchedConfig[key];
+    }
+  }
+
+  currentPresetName = name;
+  populateOptionsForm();
+  log("Applied preset: " + name);
+}
+
+function toggleInfoTooltip() {
+  var tooltip = document.getElementById("optionsTooltip");
+  if (tooltip) {
+    tooltip.style.display = tooltip.style.display === "none" ? "flex" : "none";
+  }
+}
+
+// Close tooltip on outside click
+document.addEventListener('click', function(e) {
+  var tooltip = document.getElementById("optionsTooltip");
+  if (tooltip && tooltip.style.display === "flex") {
+    var infoBtn = document.getElementById("optionsInfoBtn");
+    if (e.target !== tooltip && !tooltip.contains(e.target) && e.target !== infoBtn) {
+      tooltip.style.display = "none";
+    }
+  }
+});
+
+// Switch between tabs (currently only Basic exists)
+function switchTab(tabName) {
+  var tabs = document.querySelectorAll('.optionsTab');
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].classList.remove('active');
+  }
+  var contents = document.querySelectorAll('.tabContent');
+  for (var i = 0; i < contents.length; i++) {
+    contents[i].classList.remove('active');
+  }
+
+  if (tabName === 'basic') {
+    document.getElementById('tabBasic').classList.add('active');
+    document.getElementById('tabBasicContent').classList.add('active');
+  }
+}
+
+// ── Logs Panel ─────────────────────────────────────────────────
+
+var logsBuffer = [];
+var logsBufferMax = 500;
+
+function toggleLogsPanel() {
+  var panel = document.getElementById("logsPanel");
+  if (!panel) return;
+
+  if (panel.style.display === "none") {
+    // Populate logs from localStorage (persisted across pages)
+    var logsContent = document.getElementById("logsContent");
+    if (logsContent) {
+      logsContent.innerHTML = "";
+      try {
+        var stored = localStorage.getItem("kanki_logs");
+        var allLogs = stored ? JSON.parse(stored) : [];
+        // Also include in-memory buffer
+        allLogs = allLogs.concat(logsBuffer);
+        // Show last 500 entries, newest at bottom
+        if (allLogs.length > logsBufferMax) {
+          allLogs = allLogs.slice(allLogs.length - logsBufferMax);
+        }
+        for (var i = 0; i < allLogs.length; i++) {
+          var p = document.createElement("p");
+          p.textContent = allLogs[i];
+          logsContent.appendChild(p);
+        }
+      } catch (e) {
+        // Corrupted log data — show in-memory buffer only
+        for (var i = 0; i < logsBuffer.length; i++) {
+          var p = document.createElement("p");
+          p.textContent = logsBuffer[i];
+          logsContent.appendChild(p);
+        }
+      }
+      // Scroll to bottom (tail)
+      logsContent.scrollTop = logsContent.scrollHeight;
+    }
+    panel.style.display = "flex";
+  } else {
+    panel.style.display = "none";
+  }
+}
+
+// Override the global log function to also persist to localStorage
+(function() {
+  var origLog = log;
+  log = function(logStuff) {
+    var logEntry = "[" + new Date().toLocaleTimeString() + "] " + logStuff;
+    logsBuffer.push(logEntry);
+    if (logsBuffer.length > logsBufferMax) {
+      logsBuffer = logsBuffer.slice(logsBuffer.length - logsBufferMax);
+    }
+    // Persist to localStorage for cross-page visibility
+    try {
+      var stored = localStorage.getItem("kanki_logs");
+      var allLogs = stored ? JSON.parse(stored) : [];
+      allLogs.push(logEntry);
+      // Cap total stored logs
+      if (allLogs.length > logsBufferMax * 3) {
+        allLogs = allLogs.slice(allLogs.length - logsBufferMax * 3);
+      }
+      localStorage.setItem("kanki_logs", JSON.stringify(allLogs));
+    } catch (e) {
+      // localStorage full — ignore
+    }
+    origLog(logStuff);
+  };
+})();

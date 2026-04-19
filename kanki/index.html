@@ -68,8 +68,6 @@
 </head>
 
 <body onload="onPageLoad()">
-  <div id="log" style="display:block;max-height:150px;overflow-y:auto;font-size:0.6em;padding:4px;background:#f9f9f9;border-bottom:1px solid #ddd;"></div>
-
   <!-- Header Bar (shown on overview, browse, manage screens) -->
   <div id="headerBar">
     <div class="topBar">
@@ -107,6 +105,7 @@
           <button onclick="startStudy()">Study</button>
           <button onclick="showBrowseScreen()">Browse</button>
           <button onclick="showManageScreen()">Manage</button>
+          <button onclick="window.location.href='options.html'">Options</button>
         </div>
         <div class="buttonContainer">
           <button onclick="showResetProgressConfirm()">Reset Progress</button>
