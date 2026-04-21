@@ -10,6 +10,7 @@ Supports:
   - Sub-deck hierarchy → KAnki levels
   - Tag preservation (AnkiHub internal tags are stripped)
   - Suspended card detection
+  - Stable card IDs (cid) derived from Anki note IDs for progress-preserving updates
 
 Usage:
   python3 apkg_to_kanki.py input.apkg
@@ -42,7 +43,7 @@ from collections import defaultdict, OrderedDict
 # ── HTML cleaning ──────────────────────────────────────────────────────────────
 
 _HTML_TAG_RE   = re.compile(r'<[^>]+>')
-_WHITESPACE_RE = re.compile(r'[ \t]{2,}')
+_WHITESPACE_RE = re.compile(r'[ \t\n\r]{2,}')
 _HTML_ENTITIES = [
     ('&nbsp;', ' '), ('&lt;', '<'), ('&gt;', '>'),
     ('&amp;',  '&'), ('&quot;', '"'), ('&#39;', "'"), ('&apos;', "'"),
@@ -64,8 +65,8 @@ def strip_html(text):
 # ── Image-preserving HTML processing ──────────────────────────────────────────
 
 _IMG_SRC_RE = re.compile(r'<img\b[^>]+\bsrc=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
-# Multiple consecutive <br> tags collapsed to one
-_MULTI_BR_RE = re.compile(r'(<br>){2,}')
+# Multiple consecutive <br> tags (with optional whitespace between) collapsed to one
+_MULTI_BR_RE = re.compile(r'(\s*<br>\s*){2,}')
 
 def process_html_keep_images(html, images_dict):
     """Replace <img src="filename"> with relative paths, preserve <br> breaks,
@@ -94,6 +95,10 @@ def process_html_keep_images(html, images_dict):
     result = _MULTI_BR_RE.sub('<br>', result)
     for i, img_html in enumerate(img_replacements):
         result = result.replace('\x00img{}\x00'.format(i), img_html)
+    result = result.strip()
+    # Strip leading/trailing <br> tags left by wrapping block elements
+    result = re.sub(r'^(\s*<br>\s*)+', '', result)
+    result = re.sub(r'(\s*<br>\s*)+$', '', result)
     return result.strip()
 
 # ── Cloze handling ─────────────────────────────────────────────────────────────
@@ -558,9 +563,9 @@ def _convert_note(nid, mid, tags_str, flds_raw, notetypes, decks,
     suspended = note_suspended.get(nid, False)
 
     if images_enabled and is_image_occlusion(nt['name']):
-        entries = io_note_to_entries(flds_raw, nt, tags, suspended, images_dict)
+        entries = io_note_to_entries(nid, flds_raw, nt, tags, suspended, images_dict)
     else:
-        entries = note_to_entries(flds_raw, nt, tags, suspended,
+        entries = note_to_entries(nid, flds_raw, nt, tags, suspended,
                                   images_dict if images_enabled else None)
 
     if not entries:
@@ -574,10 +579,10 @@ def _convert_note_wrapper(args):
     return _convert_note(*args)
 
 
-def note_to_entries(flds_raw, notetype, tags, is_suspended, images_dict=None):
+def note_to_entries(nid, flds_raw, notetype, tags, is_suspended, images_dict=None):
     """
     Convert one Anki note into one or more KAnki vocabulary entries.
-    Returns a list of dicts with keys: front, back, [reading], [notes], [tags], [suspended]
+    Returns a list of dicts with keys: cid, front, back, [reading], [notes], [tags], [suspended]
     """
     flds   = flds_raw.split('\x1f')
     fnames = notetype['fields']
@@ -613,7 +618,7 @@ def note_to_entries(flds_raw, notetype, tags, is_suspended, images_dict=None):
         if not nums:
             clean_text = clean(raw_text)
             if clean_text:
-                entry = {'front': clean_text, 'back': extra or '(see card)'}
+                entry = {'cid': str(nid), 'front': clean_text, 'back': extra or '(see card)'}
                 if tags:         entry['tags']      = tags
                 if is_suspended: entry['suspended'] = True
                 entries.append(entry)
@@ -623,7 +628,7 @@ def note_to_entries(flds_raw, notetype, tags, is_suspended, images_dict=None):
                 back  = strip_html(cloze_back(raw_text, n))
                 if not front or not back:
                     continue
-                entry = {'front': front, 'back': back}
+                entry = {'cid': '{}_{}'.format(nid, n), 'front': front, 'back': back}
                 if extra:        entry['notes']     = extra
                 if tags:         entry['tags']      = tags
                 if is_suspended: entry['suspended'] = True
@@ -665,7 +670,7 @@ def note_to_entries(flds_raw, notetype, tags, is_suspended, images_dict=None):
         if not front or not back:
             return entries
 
-        entry = {'front': front, 'back': back}
+        entry = {'cid': str(nid), 'front': front, 'back': back}
         if reading:      entry['reading']   = reading
         if notes:        entry['notes']     = notes
         if tags:         entry['tags']      = tags
@@ -674,7 +679,7 @@ def note_to_entries(flds_raw, notetype, tags, is_suspended, images_dict=None):
 
     return entries
 
-def io_note_to_entries(flds_raw, notetype, tags, is_suspended, images_dict):
+def io_note_to_entries(nid, flds_raw, notetype, tags, is_suspended, images_dict):
     """Convert an image occlusion note to N card entries, one per shape."""
     flds   = flds_raw.split('\x1f')
     fnames = notetype['fields']
@@ -707,6 +712,7 @@ def io_note_to_entries(flds_raw, notetype, tags, is_suspended, images_dict):
     entries = []
     for shape in shapes:
         entry = {
+            'cid':             '{}_{}'.format(nid, shape['ordinal']),
             'type':            'image-occlusion',
             'imageSrc':        images_dict.get(image_key, ''),
             'shapes':          shapes,
