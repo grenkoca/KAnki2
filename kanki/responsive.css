@@ -21,7 +21,7 @@ body {
   margin-left: auto;
   margin-right: auto;
   padding: calc(20px * var(--device-scale));
-  scroll-behavior: smooth;
+
   scrollbar-width: thin;
   scrollbar-color: #888 #f1f1f1;
 }
@@ -68,7 +68,7 @@ button {
 @media screen and (orientation: landscape) {
   .card {
     width: 80%;
-    scroll-behavior: smooth;
+  
     scrollbar-width: thin;
     scrollbar-color: #888 #f1f1f1;
   }
@@ -93,7 +93,7 @@ button {
     padding: 25px;
     overflow-y: auto;
     overflow-x: hidden;
-    scroll-behavior: smooth;
+  
     scrollbar-width: thin;
     scrollbar-color: #888 #f1f1f1;
   }
@@ -161,7 +161,7 @@ button {
     padding: 25px;
     overflow-y: auto;
     overflow-x: hidden;
-    scroll-behavior: smooth;
+  
     scrollbar-width: thin;
     scrollbar-color: #888 #f1f1f1;
   }
@@ -264,7 +264,7 @@ button {
     padding: 45px;
     overflow-y: auto;
     overflow-x: hidden;
-    scroll-behavior: smooth;
+  
     scrollbar-width: thin;
     scrollbar-color: #888 #f1f1f1;
   }

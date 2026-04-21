@@ -1,0 +1,447 @@
+<!DOCTYPE HTML>
+<html>
+
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta charset="utf-8">
+  <script src="js/polyfill.min.js"></script>
+  <script src="js/kanki_config.js"></script>
+  <link href="main.css" rel="stylesheet">
+  <link href="responsive.css" rel="stylesheet">
+  <title>KAnki - Options</title>
+  <script>
+    // ── Scheduling config (kept in sync with main.js) ─────────────────────────
+
+    var defaultSchedConfig = {
+      newPerDay: 20,
+      reviewsPerDay: 200,
+      learnSteps: [1, 10],
+      relearnSteps: [10],
+      graduatingIntervalGood: 1,
+      graduatingIntervalEasy: 4,
+      initialEase: 2.5,
+      easyMultiplier: 1.3,
+      hardMultiplier: 1.2,
+      maximumReviewInterval: 36500,
+      lapseMultiplier: 0.0,
+      minimumLapseInterval: 1,
+      leechThreshold: 8,
+      leechAction: 'tag',
+      fuzzEnabled: true,
+      fuzzFactor: 0.15,
+      buryNew: false,
+      buryReviews: false,
+    };
+
+    var schedPresets = {
+      default: {
+        newPerDay: 20, reviewsPerDay: 200,
+        learnSteps: [1, 10], relearnSteps: [10],
+        graduatingIntervalGood: 1, graduatingIntervalEasy: 4,
+        initialEase: 2.5, easyMultiplier: 1.3, hardMultiplier: 1.2,
+        maximumReviewInterval: 36500,
+      },
+      fast: {
+        newPerDay: 50, reviewsPerDay: 500,
+        learnSteps: [1, 10], relearnSteps: [10],
+        graduatingIntervalGood: 1, graduatingIntervalEasy: 2,
+        initialEase: 2.65, easyMultiplier: 1.25, hardMultiplier: 1.2,
+        maximumReviewInterval: 36500,
+      },
+      thorough: {
+        newPerDay: 10, reviewsPerDay: 100,
+        learnSteps: [1, 10], relearnSteps: [10],
+        graduatingIntervalGood: 2, graduatingIntervalEasy: 7,
+        initialEase: 2.5, easyMultiplier: 1.3, hardMultiplier: 1.2,
+        maximumReviewInterval: 36500,
+      },
+      beginner: {
+        newPerDay: 20, reviewsPerDay: 200,
+        learnSteps: [1, 10], relearnSteps: [10],
+        graduatingIntervalGood: 1, graduatingIntervalEasy: 4,
+        initialEase: 2.65, easyMultiplier: 1.25, hardMultiplier: 1.2,
+        maximumReviewInterval: 36500,
+      },
+      intermediate: {
+        newPerDay: 20, reviewsPerDay: 200,
+        learnSteps: [1, 10], relearnSteps: [10],
+        graduatingIntervalGood: 1, graduatingIntervalEasy: 4,
+        initialEase: 2.5, easyMultiplier: 1.3, hardMultiplier: 1.2,
+        maximumReviewInterval: 36500,
+      },
+      advanced: {
+        newPerDay: 20, reviewsPerDay: 200,
+        learnSteps: [1, 10], relearnSteps: [10],
+        graduatingIntervalGood: 1, graduatingIntervalEasy: 4,
+        initialEase: 2.5, easyMultiplier: 1.3, hardMultiplier: 1.2,
+        maximumReviewInterval: 36500,
+      },
+    };
+
+    // ── Config persistence ────────────────────────────────────────────────────
+
+    function loadSchedConfig() {
+      try {
+        var saved = localStorage.getItem('kanki_sched_config');
+        if (saved) {
+          var cfg = JSON.parse(saved);
+          for (var key in defaultSchedConfig) {
+            if (defaultSchedConfig.hasOwnProperty(key) && cfg[key] === undefined) {
+              cfg[key] = defaultSchedConfig[key];
+            }
+          }
+          return cfg;
+        }
+      } catch (e) {}
+      return JSON.parse(JSON.stringify(defaultSchedConfig));
+    }
+
+    function saveSchedConfig(cfg) {
+      try {
+        localStorage.setItem('kanki_sched_config', JSON.stringify(cfg));
+      } catch (e) {}
+    }
+
+    // ── Form helpers ──────────────────────────────────────────────────────────
+
+    function stepsToString(arr) {
+      return Array.isArray(arr) ? arr.join(', ') : String(arr);
+    }
+
+    function stringToSteps(str) {
+      return str.split(',').map(function(s) { return parseFloat(s.trim()); }).filter(function(n) { return !isNaN(n); });
+    }
+
+    function populateForm(cfg) {
+      document.getElementById('f_newPerDay').value          = cfg.newPerDay;
+      document.getElementById('f_learnSteps').value         = stepsToString(cfg.learnSteps);
+      document.getElementById('f_graduatingGood').value     = cfg.graduatingIntervalGood;
+      document.getElementById('f_graduatingEasy').value     = cfg.graduatingIntervalEasy;
+      document.getElementById('f_initialEase').value        = cfg.initialEase;
+      document.getElementById('f_reviewsPerDay').value      = cfg.reviewsPerDay;
+      document.getElementById('f_easyMultiplier').value     = cfg.easyMultiplier;
+      document.getElementById('f_hardMultiplier').value     = cfg.hardMultiplier;
+      document.getElementById('f_maxInterval').value        = cfg.maximumReviewInterval;
+      document.getElementById('f_fuzzEnabled').checked      = cfg.fuzzEnabled;
+      document.getElementById('f_fuzzFactor').value         = cfg.fuzzFactor;
+      document.getElementById('f_buryNew').checked          = cfg.buryNew;
+      document.getElementById('f_buryReviews').checked      = cfg.buryReviews;
+      document.getElementById('f_relearnSteps').value       = stepsToString(cfg.relearnSteps);
+      document.getElementById('f_lapseMultiplier').value    = cfg.lapseMultiplier;
+      document.getElementById('f_minLapseInterval').value   = cfg.minimumLapseInterval;
+      document.getElementById('f_leechThreshold').value     = cfg.leechThreshold;
+      document.getElementById('f_leechAction').value        = cfg.leechAction;
+    }
+
+    function readForm() {
+      return {
+        newPerDay:              parseInt(document.getElementById('f_newPerDay').value,        10),
+        learnSteps:             stringToSteps(document.getElementById('f_learnSteps').value),
+        graduatingIntervalGood: parseInt(document.getElementById('f_graduatingGood').value,   10),
+        graduatingIntervalEasy: parseInt(document.getElementById('f_graduatingEasy').value,   10),
+        initialEase:            parseFloat(document.getElementById('f_initialEase').value),
+        reviewsPerDay:          parseInt(document.getElementById('f_reviewsPerDay').value,    10),
+        easyMultiplier:         parseFloat(document.getElementById('f_easyMultiplier').value),
+        hardMultiplier:         parseFloat(document.getElementById('f_hardMultiplier').value),
+        maximumReviewInterval:  parseInt(document.getElementById('f_maxInterval').value,      10),
+        fuzzEnabled:            document.getElementById('f_fuzzEnabled').checked,
+        fuzzFactor:             parseFloat(document.getElementById('f_fuzzFactor').value),
+        buryNew:                document.getElementById('f_buryNew').checked,
+        buryReviews:            document.getElementById('f_buryReviews').checked,
+        relearnSteps:           stringToSteps(document.getElementById('f_relearnSteps').value),
+        lapseMultiplier:        parseFloat(document.getElementById('f_lapseMultiplier').value),
+        minimumLapseInterval:   parseInt(document.getElementById('f_minLapseInterval').value, 10),
+        leechThreshold:         parseInt(document.getElementById('f_leechThreshold').value,   10),
+        leechAction:            document.getElementById('f_leechAction').value,
+      };
+    }
+
+    // ── Tab switching ─────────────────────────────────────────────────────────
+
+    function switchTab(name) {
+      var tabs    = document.querySelectorAll('.optionsTab');
+      var content = document.querySelectorAll('.tabContent');
+      for (var i = 0; i < tabs.length; i++) {
+        tabs[i].classList.remove('active');
+        content[i].classList.remove('active');
+      }
+      document.getElementById('tab-' + name).classList.add('active');
+      var tabBtns = document.querySelectorAll('.optionsTab');
+      for (var j = 0; j < tabBtns.length; j++) {
+        if (tabBtns[j].getAttribute('data-tab') === name) {
+          tabBtns[j].classList.add('active');
+        }
+      }
+    }
+
+    // ── Preset apply ──────────────────────────────────────────────────────────
+
+    function applyPreset() {
+      var name = document.getElementById('presetSelect').value;
+      var preset = schedPresets[name];
+      if (!preset) return;
+      var merged = JSON.parse(JSON.stringify(defaultSchedConfig));
+      for (var k in preset) {
+        if (preset.hasOwnProperty(k)) merged[k] = preset[k];
+      }
+      populateForm(merged);
+    }
+
+    // ── Save & return ─────────────────────────────────────────────────────────
+
+    function saveAndReturn() {
+      saveSchedConfig(readForm());
+      setTimeout(function() { window.location.href = 'index.html'; }, 100);
+    }
+
+    // ── Update card content ───────────────────────────────────────────────────
+
+    function fixCardContent() {
+      var statusEl = document.getElementById('toolStatus');
+      statusEl.textContent = 'Working...';
+
+      var saved = localStorage.getItem('kanki_deck');
+      if (!saved) { statusEl.textContent = 'No saved deck found.'; return; }
+
+      var d;
+      try { d = JSON.parse(saved); } catch (e) {
+        statusEl.textContent = 'Error reading deck: ' + e.message; return;
+      }
+
+      if (typeof VOCABULARY === 'undefined') {
+        statusEl.textContent = 'VOCABULARY not loaded.'; return;
+      }
+
+      // Build CID-keyed map and ordered list from VOCABULARY
+      var byCid  = {};
+      var byIndex = [];
+      for (var level in VOCABULARY) {
+        if (VOCABULARY.hasOwnProperty(level)) {
+          for (var i = 0; i < VOCABULARY[level].length; i++) {
+            var w = VOCABULARY[level][i];
+            var front = w.front;
+            if (w.reading) front = w.front + ' (' + w.reading + ')';
+            var entry = { front: front, back: w.back, notes: w.notes || '' };
+            byIndex.push(entry);
+            if (w.cid) byCid[w.cid] = entry;
+          }
+        }
+      }
+
+      var useCids = Object.keys(byCid).length > 0;
+
+      if (!useCids && byIndex.length !== d.cards.length) {
+        statusEl.textContent = 'Card count mismatch (' + byIndex.length + ' in VOCABULARY vs ' + d.cards.length + ' in deck) and no CIDs available. Aborted.';
+        return;
+      }
+
+      var updated = 0;
+      var skipped = 0;
+      for (var i = 0; i < d.cards.length; i++) {
+        var c  = d.cards[i];
+        var fc = useCids && c.id && byCid[c.id] ? byCid[c.id] : byIndex[i];
+        if (!fc) { skipped++; continue; }
+        if (c.front !== fc.front || c.back !== fc.back || c.notes !== fc.notes) {
+          c.front = fc.front;
+          c.back  = fc.back;
+          c.notes = fc.notes;
+          updated++;
+        }
+      }
+
+      try {
+        localStorage.setItem('kanki_deck', JSON.stringify(d));
+        var msg = 'Done. Updated ' + updated + ' card(s). Progress preserved.';
+        if (skipped > 0) msg += ' (' + skipped + ' skipped — no match found)';
+        statusEl.textContent = msg;
+      } catch (e) {
+        statusEl.textContent = 'Error saving deck: ' + e.message;
+      }
+    }
+
+    // ── Tooltip ───────────────────────────────────────────────────────────────
+
+    function showTooltip() {
+      document.getElementById('tooltipOverlay').style.display = 'flex';
+    }
+
+    function hideTooltip() {
+      document.getElementById('tooltipOverlay').style.display = 'none';
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+
+    window.onload = function() {
+      populateForm(loadSchedConfig());
+      // Activate first tab
+      switchTab('new');
+    };
+  </script>
+</head>
+
+<body>
+  <div class="options-screen">
+
+    <div id="optionsHeader">
+      <button onclick="window.location.href='index.html'">&#8592; Back</button>
+      <span style="display:table-cell;font-size:1.1em;font-weight:bold;text-align:center;vertical-align:middle;padding:0 10px;">Options</span>
+      <button id="optionsSaveBtn" onclick="saveAndReturn()">Save</button>
+    </div>
+
+    <div id="optionsPresetBar">
+      <label>Preset:</label>
+      <select id="presetSelect">
+        <option value="default">Default</option>
+        <option value="fast">Fast</option>
+        <option value="thorough">Thorough</option>
+        <option value="beginner">Beginner</option>
+        <option value="intermediate">Intermediate</option>
+        <option value="advanced">Advanced</option>
+      </select>
+      <button onclick="applyPreset()">Apply</button>
+    </div>
+
+    <button class="options-info-btn" onclick="showTooltip()">?</button>
+
+    <div id="optionsTabs">
+      <button class="optionsTab active" data-tab="new"     onclick="switchTab('new')">New Cards</button>
+      <button class="optionsTab"        data-tab="reviews" onclick="switchTab('reviews')">Reviews</button>
+      <button class="optionsTab"        data-tab="lapses"  onclick="switchTab('lapses')">Lapses</button>
+      <button class="optionsTab"        data-tab="tools"   onclick="switchTab('tools')">Tools</button>
+    </div>
+
+    <div class="optionsContent">
+
+      <!-- New Cards tab -->
+      <div id="tab-new" class="tabContent">
+        <div class="optionRow">
+          <label>New cards/day</label>
+          <input type="number" id="f_newPerDay" min="0" max="9999">
+        </div>
+        <div class="optionRow">
+          <label>Learning steps (min)</label>
+          <input type="text" id="f_learnSteps" placeholder="1, 10">
+        </div>
+        <div class="optionRow">
+          <label>Graduating interval — Good (days)</label>
+          <input type="number" id="f_graduatingGood" min="1" max="365">
+        </div>
+        <div class="optionRow">
+          <label>Graduating interval — Easy (days)</label>
+          <input type="number" id="f_graduatingEasy" min="1" max="365">
+        </div>
+        <div class="optionRow">
+          <label>Starting ease factor</label>
+          <input type="number" id="f_initialEase" min="1.3" max="5.0" step="0.05">
+        </div>
+      </div>
+
+      <!-- Reviews tab -->
+      <div id="tab-reviews" class="tabContent">
+        <div class="optionRow">
+          <label>Max reviews/day</label>
+          <input type="number" id="f_reviewsPerDay" min="0" max="99999">
+        </div>
+        <div class="optionRow">
+          <label>Easy multiplier</label>
+          <input type="number" id="f_easyMultiplier" min="1.0" max="3.0" step="0.05">
+        </div>
+        <div class="optionRow">
+          <label>Hard multiplier</label>
+          <input type="number" id="f_hardMultiplier" min="1.0" max="3.0" step="0.05">
+        </div>
+        <div class="optionRow">
+          <label>Max review interval (days)</label>
+          <input type="number" id="f_maxInterval" min="1" max="36500">
+        </div>
+        <div class="optionRow">
+          <label>Interval fuzz</label>
+          <input type="checkbox" id="f_fuzzEnabled">
+        </div>
+        <div class="optionRow">
+          <label>Fuzz factor</label>
+          <input type="number" id="f_fuzzFactor" min="0" max="0.5" step="0.01">
+        </div>
+        <div class="optionRow">
+          <label>Bury new siblings</label>
+          <input type="checkbox" id="f_buryNew">
+        </div>
+        <div class="optionRow">
+          <label>Bury review siblings</label>
+          <input type="checkbox" id="f_buryReviews">
+        </div>
+      </div>
+
+      <!-- Lapses tab -->
+      <div id="tab-lapses" class="tabContent">
+        <div class="optionRow">
+          <label>Relearn steps (min)</label>
+          <input type="text" id="f_relearnSteps" placeholder="10">
+        </div>
+        <div class="optionRow">
+          <label>New interval after lapse (multiplier)</label>
+          <input type="number" id="f_lapseMultiplier" min="0" max="1.0" step="0.05">
+        </div>
+        <div class="optionRow">
+          <label>Minimum lapse interval (days)</label>
+          <input type="number" id="f_minLapseInterval" min="1" max="365">
+        </div>
+        <div class="optionRow">
+          <label>Leech threshold (lapses)</label>
+          <input type="number" id="f_leechThreshold" min="1" max="20">
+        </div>
+        <div class="optionRow">
+          <label>Leech action</label>
+          <select id="f_leechAction" style="width:80px;padding:4px 6px;border:1px solid #000;font-size:0.9em;">
+            <option value="tag">Tag</option>
+            <option value="suspend">Suspend</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Tools tab -->
+      <div id="tab-tools" class="tabContent">
+        <div style="margin:10px 0 6px 0;font-size:0.9em;color:#555;">
+          Sync card text with the latest deck source, preserving all review progress.
+        </div>
+        <div class="optionRow" style="border-bottom:none;">
+          <button onclick="fixCardContent()" style="padding:8px 16px;border:1px solid #000;background-color:#fff;font-size:0.95em;cursor:pointer;">
+            Update Card Content
+          </button>
+        </div>
+        <div id="toolStatus" style="margin-top:10px;font-size:0.9em;color:#333;min-height:20px;"></div>
+      </div>
+
+    </div><!-- .optionsContent -->
+
+    <div id="optionsFooter">
+      <button onclick="saveAndReturn()">Save &amp; Return</button>
+    </div>
+
+  </div><!-- .options-screen -->
+
+  <!-- Info tooltip overlay -->
+  <div class="options-tooltip" id="tooltipOverlay" style="display:none;" onclick="hideTooltip()">
+    <div class="tooltip-content" onclick="event.stopPropagation()">
+      <button class="tooltip-close-btn" onclick="hideTooltip()">&#x2715;</button>
+      <h3>Scheduling Options</h3>
+      <ul>
+        <li><strong>New cards/day</strong> — Maximum new cards introduced per day.</li>
+        <li><strong>Learning steps</strong> — Intervals (in minutes) for cards still in the learning phase. Comma-separated.</li>
+        <li><strong>Graduating interval</strong> — First review interval once a card leaves learning (Good vs Easy).</li>
+        <li><strong>Starting ease</strong> — Initial ease factor for new cards (2.5 = default Anki).</li>
+        <li><strong>Max reviews/day</strong> — Cap on review cards shown per day.</li>
+        <li><strong>Easy/Hard multiplier</strong> — Scales the next interval when you press Easy or Hard.</li>
+        <li><strong>Max review interval</strong> — Longest interval a card can reach (days).</li>
+        <li><strong>Interval fuzz</strong> — Adds small random variation to intervals to prevent card clustering.</li>
+        <li><strong>Relearn steps</strong> — Re-learning intervals (minutes) after a lapse.</li>
+        <li><strong>New interval after lapse</strong> — Multiplier applied to the old interval on a lapse (0 = reset to 1 day).</li>
+        <li><strong>Leech threshold</strong> — Lapses before a card is flagged as a leech.</li>
+        <li><strong>Leech action</strong> — Tag the card or suspend it when the threshold is reached.</li>
+      </ul>
+    </div>
+  </div>
+
+</body>
+
+</html>

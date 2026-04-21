@@ -155,10 +155,8 @@ h1 {
   word-wrap: break-word;
   overflow-wrap: break-word;
   hyphens: auto;
-  /* Enhanced scrolling for better user experience */
-  scroll-behavior: smooth; /* Smooth scrolling when navigating */
-  scrollbar-width: thin; /* Thinner scrollbar for better aesthetics */
-  scrollbar-color: #888 #f1f1f1; /* Custom scrollbar colors */
+  scrollbar-width: thin;
+  scrollbar-color: #888 #f1f1f1;
 }
 
 .levelBadge {
@@ -256,10 +254,9 @@ h1 {
   height: 4px;
   background: linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0) 100%);
   opacity: 0;
-  transition: opacity 0.2s ease;
   pointer-events: none;
   z-index: 2;
-  display: none; /* Hidden by default */
+  display: none;
 }
 
 .card::after {
@@ -270,10 +267,9 @@ h1 {
   right: 0;
   height: 4px;
   opacity: 0;
-  transition: opacity 0.2s ease;
   pointer-events: none;
   z-index: 2;
-  display: none; /* Hidden by default */
+  display: none;
 }
 
 /* Show scroll indicators when content is scrollable AND scrolled */
@@ -291,11 +287,6 @@ h1 {
 .card:focus {
   outline: 2px solid #4285f4;
   outline-offset: 2px;
-}
-
-/* Add a subtle animation when scrolling programmatically */
-.card.smooth-scroll {
-  scroll-behavior: smooth;
 }
 
 #showAnswerBtn {
@@ -338,11 +329,6 @@ h1 {
   margin: 20px 0 20px 0; /* Reduced bottom margin */
   text-align: center;
   overflow: visible; /* Allow content to be visible instead of hidden */
-}
-
-#showAnswerBtn {
-  /* Ensure show answer button maintains consistent position */
-  display: inline-block;
 }
 
 #intervalButtons {

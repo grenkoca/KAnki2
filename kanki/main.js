@@ -143,7 +143,7 @@ function clonePreset() {
 function migrateCard(card) {
   if (card.reviewState) return card; // already migrated
 
-  var ease = card.difficulty > 0 ? 2.5 : 2.5;
+  var ease = SCHED_CONFIG ? SCHED_CONFIG.initialEase : 2.5;
   card.reviewState = {
     scheduledDays: Math.max(0, card.difficulty),
     elapsedDays: 0,
@@ -178,7 +178,6 @@ function computeSM2Interval(card, button) {
   // Days since card was last scheduled (including lateness)
   var daysLate = 0;
   if (rs.scheduledDays > 0) {
-    var scheduledMs = rs.scheduledDays * 24 * 60 * 60 * 1000;
     var lastReviewMs = card.lastViewed || now;
     var daysSinceReview = (now - lastReviewMs) / (24 * 60 * 60 * 1000);
     daysLate = Math.max(0, daysSinceReview - rs.scheduledDays);
@@ -342,63 +341,9 @@ function setupImageErrorHandling() {
   }, true);
 }
 
-// Image cache to avoid re-fetching the same file
-var _imageCache = {};
-
-// Detect the MIME type from a file extension
-function getMimeType(filename) {
-  var ext = '';
-  var lastDot = filename.lastIndexOf('.');
-  if (lastDot >= 0) {
-    ext = filename.substring(lastDot).toLowerCase();
-  }
-  switch (ext) {
-    case '.jpg': case '.jpeg': return 'image/jpeg';
-    case '.png':  return 'image/png';
-    case '.gif':  return 'image/gif';
-    case '.webp': return 'image/webp';
-    default:      return 'image/jpeg';
-  }
-}
-
-// Load an image from the images/ directory using the SDK fetchFile
-// and convert it to a base64 data URI for the <img> tag
-function loadImageAsDataUri(imagePath, callback) {
-  // imagePath is like "images/filename.webp"
-  if (_imageCache[imagePath]) {
-    callback(_imageCache[imagePath]);
-    return;
-  }
-
-  // Use SDK fetchFile to load the image
-  // For text files this works fine, for binary images we need to handle corruption
-  fetchFile(imagePath, 5000, false).then(function(data) {
-    try {
-      var mime = getMimeType(imagePath);
-      // Convert the loaded data to base64
-      // The data from fetchFile may have issues with binary files
-      // Try using btoa on the string data
-      var b64 = btoa(unescape(encodeURIComponent(data)));
-      var dataUri = 'data:' + mime + ';base64,' + b64;
-      _imageCache[imagePath] = dataUri;
-      callback(dataUri);
-    } catch (e) {
-      log("Image conversion error for " + imagePath + ": " + e.message);
-      callback(null);
-    }
-  }).catch(function(err) {
-    log("Image fetch failed for " + imagePath + ": " + err);
-    callback(null);
-  });
-}
-
-// Resolve image paths in HTML — for Kindle, we use the SDK to load images
-// and convert them to base64 data URIs at runtime
+// Pass-through: images load via direct <img src=""> tags; the global error
+// handler (setupImageErrorHandling) shows a placeholder for any that fail.
 function resolveImagePathsInHTML(html) {
-  if (!html) return html;
-  // The HTML contains <img src="images/filename"> references
-  // We need to load each image via SDK and convert to data URI
-  // For now, return the HTML as-is and let the error handler catch failures
   return html;
 }
 
@@ -446,7 +391,7 @@ function initializeFixedHeights() {
   if (intervalButtons) {
     intervalButtons.style.display = "block";
     intervalButtons.style.visibility = "hidden";
-    var forceLayout = intervalButtons.offsetHeight;
+    intervalButtons.offsetHeight; // force reflow so hidden buttons don't shift layout
   }
 
   var backElement = document.getElementById("cardBack");
@@ -536,13 +481,14 @@ function createDeck() {
   };
 }
 
-function createCard(front, reading, back, notes, level, difficulty) {
+function createCard(front, reading, back, notes, level, difficulty, cid) {
   var displayText = front;
   if (reading) {
     displayText = front + " (" + reading + ")";
   }
 
   return {
+    id: cid || null,
     front: displayText,
     back: back,
     notes: notes || "",
@@ -573,7 +519,8 @@ function createDefaultDeck() {
             word.back,
             word.notes,
             level,
-            0
+            0,
+            word.cid || null
           );
           if (word.tags && word.tags.length)  card.tags      = word.tags.slice();
           if (word.suspended)                  card.suspended = true;
@@ -619,6 +566,62 @@ function saveCard(card) {
   }
 }
 
+// Migrate index-based card IDs to stable CIDs from VOCABULARY.
+// Only runs when VOCABULARY entries carry a 'cid' field (i.e. after generate-cids.js
+// has been run). Moves kanki_deck_cards entries from old keys to new CID keys so
+// per-card progress is not lost during the transition.
+function assignStableCids() {
+  if (typeof VOCABULARY === 'undefined') return;
+
+  // Build ordered CID list matching createDefaultDeck() iteration order
+  var vocabCids = [];
+  for (var level in VOCABULARY) {
+    if (VOCABULARY.hasOwnProperty(level)) {
+      for (var i = 0; i < VOCABULARY[level].length; i++) {
+        vocabCids.push(VOCABULARY[level][i].cid || null);
+      }
+    }
+  }
+
+  // Only proceed if VOCABULARY has CIDs and card counts match
+  if (!vocabCids[0] || vocabCids.length !== deck.cards.length) return;
+
+  var cardSaves = {};
+  try {
+    cardSaves = JSON.parse(localStorage.getItem('kanki_deck_cards') || '{}');
+  } catch (e) {}
+
+  var migrated = 0;
+  var savesChanged = false;
+  for (var i = 0; i < deck.cards.length; i++) {
+    var c      = deck.cards[i];
+    var newCid = vocabCids[i];
+    if (!newCid || c.id === newCid) continue;
+
+    // Remap per-card save entry from old key to new CID key
+    if (c.id && cardSaves[c.id]) {
+      cardSaves[newCid] = cardSaves[c.id];
+      delete cardSaves[c.id];
+      savesChanged = true;
+    }
+
+    c.id = newCid;
+    migrated++;
+  }
+
+  if (migrated > 0) {
+    log("Migrated " + migrated + " cards to stable CIDs");
+    if (savesChanged) {
+      try {
+        localStorage.setItem('kanki_deck_cards', JSON.stringify(cardSaves));
+      } catch (e) {
+        log("Error saving migrated card IDs: " + e.message);
+      }
+    }
+    // kanki_deck will be written on the next regular saveDeck() call
+  }
+}
+
 // Load deck from localStorage or create a new one if none exists
 function loadDeck() {
   try {
@@ -660,6 +663,10 @@ function loadDeck() {
         if (deck.cards[i].suspended === undefined) deck.cards[i].suspended = false;
         if (!deck.cards[i].tags) deck.cards[i].tags = [];
       }
+
+      // One-time migration: assign stable CIDs if VOCABULARY now carries them
+      assignStableCids();
+
       return true;
     }
   } catch (e) {
@@ -710,105 +717,30 @@ function showConfirmation(message, onConfirm) {
   overlay.style.display = "block";
 }
 
-// Spaced repetition algorithm (simplified SM-2)
-function calculateNextReview(card, wasCorrect) {
-  var now = new Date().getTime();
-
-  card.history.push({
-    date: now,
-    result: wasCorrect
-  });
-
-  if (wasCorrect) {
-    card.difficulty += 1;
-
-    var interval;
-    switch (card.difficulty) {
-      case 1:
-        interval = 1 * 24 * 60 * 60 * 1000;
-        break;
-      case 2:
-        interval = 3 * 24 * 60 * 60 * 1000;
-        break;
-      case 3:
-        interval = 7 * 24 * 60 * 60 * 1000;
-        break;
-      case 4:
-        interval = 14 * 24 * 60 * 60 * 1000;
-        break;
-      case 5:
-        interval = 30 * 24 * 60 * 60 * 1000;
-        break;
-      default:
-        interval = 60 * 24 * 60 * 60 * 1000;
-        break;
-    }
-
-    card.nextReview = now + interval;
-  } else {
-    card.difficulty = 0;
-    card.nextReview = now + (10 * 60 * 1000);
-  }
-
-  saveCard(card);
-
-  return card;
-}
-
-// Function to set next review time based on difficulty
-function setNextReviewTime(card, difficulty) {
-  var now = new Date().getTime();
-
-  card.history.push({
-    date: now,
-    result: true,
-    difficulty: difficulty
-  });
-
-  var interval;
-  switch (difficulty) {
-    case 'again':
-      interval = 10 * 60 * 1000;
-      card.difficulty = Math.max(0, card.difficulty - 1);
-      break;
-    case 'hard':
-      interval = 1 * 24 * 60 * 60 * 1000;
-      break;
-    case 'good':
-      interval = 3 * 24 * 60 * 60 * 1000;
-      card.difficulty += 1;
-      break;
-    case 'easy':
-      interval = 4 * 24 * 60 * 60 * 1000;
-      card.difficulty += 2;
-      break;
-    default:
-      interval = 1 * 24 * 60 * 60 * 1000;
-  }
-
-  if (card.difficulty > 0) {
-    interval = interval * (1 + (card.difficulty * 0.5));
-  }
-
-  card.nextReview = now + interval;
-
-  return card;
-}
-
-// Get cards due for review (filtered by level if applicable)
+// Get cards due for review (filtered by level, capped by daily new/review limits)
 function getDueCards() {
   var now = new Date().getTime();
-  var dueCards = [];
+  var cfg = SCHED_CONFIG;
+  var newLimit    = cfg ? cfg.newPerDay     : 20;
+  var reviewLimit = cfg ? cfg.reviewsPerDay : 200;
+  var newCount    = 0;
+  var reviewCount = 0;
+  var dueCards    = [];
 
   for (var i = 0; i < deck.cards.length; i++) {
     var card = deck.cards[i];
     if (card.suspended) continue;
     if (card.nextReview <= now) {
       var levelMatch = (currentLevel === "all" || card.level === currentLevel);
-      var starMatch = (!showingStarredOnly || card.starred === true);
+      var starMatch  = (!showingStarredOnly || card.starred === true);
 
       if (levelMatch && starMatch) {
-        dueCards.push(card);
+        var isNew = !card.history || card.history.length === 0;
+        if (isNew) {
+          if (newCount < newLimit) { newCount++; dueCards.push(card); }
+        } else {
+          if (reviewCount < reviewLimit) { reviewCount++; dueCards.push(card); }
+        }
       }
     }
   }
@@ -934,7 +866,7 @@ function applyTextScaling(frontElement, backElement, notesElement) {
 
   var frontText = frontElement.textContent || frontElement.innerHTML;
   var backText = backElement.textContent || backElement.innerHTML;
-  var notesText = notesElement.textContent || notesElement;
+  var notesText = notesElement ? (notesElement.textContent || '') : '';
 
   var frontLength = frontText ? frontText.length : 0;
   var backLength = backText ? backText.length : 0;
@@ -1164,46 +1096,6 @@ function showAnswer() {
   }
 }
 
-// Handle marking card as correct or incorrect
-function answerCard(wasCorrect) {
-  var dueCards = getDueCards();
-  if (dueCards.length === 0) return;
-
-  var cardIndex = currentCardIndex % dueCards.length;
-  var card = dueCards[cardIndex];
-
-  if (!wasCorrect) {
-    var now = new Date().getTime();
-    card.history.push({
-      date: now,
-      result: false
-    });
-
-    card.difficulty = 0;
-    card.nextReview = now + (10 * 60 * 1000);
-
-    incorrectAnswers++;
-
-    if (!inErrorReviewMode) {
-      incorrectCardsQueue.push(card);
-    }
-  }
-
-  currentCardIndex++;
-
-  saveCard(card);
-
-  if (!inErrorReviewMode && currentCardIndex % dueCards.length === 0 && incorrectCardsQueue.length > 0) {
-    showErrorReviewPrompt();
-  } else {
-    var nextCard = null;
-    if (currentCardIndex < currentSessionDueCards.length) {
-      nextCard = currentSessionDueCards[currentCardIndex];
-    }
-    displayCurrentCard(currentSessionDueCards, false, nextCard);
-  }
-}
-
 // Handle answer with interval
 function handleAnswerWithInterval(difficulty) {
   if (Date.now() - lastShowAnswerTime < 500) {
@@ -1223,9 +1115,7 @@ function handleAnswerWithInterval(difficulty) {
 
     if (difficulty === 'again') {
       incorrectAnswers++;
-      if (!inErrorReviewMode) {
-        incorrectCardsQueue.push(card);
-      }
+      incorrectCardsQueue.push(card);
     } else {
       correctAnswers++;
     }
@@ -1276,6 +1166,7 @@ function answerStarredCardWithInterval(difficulty) {
   var card = starredCardsQueue[currentCardIndex];
   currentCardIndex++;
 
+  setNextReviewTime(card, difficulty);
   saveCard(card);
 
   if (currentCardIndex >= starredCardsQueue.length) {
@@ -1491,32 +1382,6 @@ function displayErrorCard(showAnswer) {
   updateProgressDisplay();
 }
 
-function answerErrorCard(wasCorrect) {
-  if (currentCardIndex >= incorrectCardsQueue.length) return;
-
-  if (!wasCorrect) {
-    currentCardIndex++;
-
-    if (currentCardIndex >= incorrectCardsQueue.length) {
-      endErrorReview();
-    } else {
-      displayErrorCard(false);
-    }
-  }
-}
-
-function answerStarredCard(wasCorrect) {
-  if (currentCardIndex >= starredCardsQueue.length) return;
-
-  currentCardIndex++;
-
-  if (currentCardIndex >= starredCardsQueue.length) {
-    endStarredReview();
-  } else {
-    displayStarredCard(false);
-  }
-}
-
 function endErrorReview() {
   incorrectCardsQueue = incorrectCardsQueue.filter(function(card) {
     return card !== null;
@@ -1640,19 +1505,6 @@ function endStarredReview() {
   updateLevelDisplay();
   displayCurrentCard(currentSessionDueCards, false);
   saveDeck(); // endStarredReview: save full deck after starred review session
-}
-
-function handleAnswerCard(wasCorrect) {
-  if (inErrorReviewMode) {
-    answerErrorCard(wasCorrect);
-  } else if (inStarredReviewMode) {
-    answerStarredCard(wasCorrect);
-  } else {
-    if (!wasCorrect) {
-      answerCard(wasCorrect);
-    }
-    saveDeck();
-  }
 }
 
 function toggleStarCurrentCard() {
@@ -2388,28 +2240,6 @@ function onOptionsPageLoad() {
   populateOptionsForm();
 }
 
-function showOptionsScreen() {
-  currentScreen = 'options';
-  var overviewEl = document.getElementById("deckOverview");
-  var mainEl = document.getElementById("mainContainer");
-  var headerEl = document.getElementById("headerBar");
-  if (overviewEl) overviewEl.style.display = "none";
-  if (mainEl) mainEl.style.display = "none";
-  if (headerEl) headerEl.style.display = "none";
-  loadSchedConfig();
-  populateOptionsForm();
-}
-
-function hideOptionsScreen() {
-  currentScreen = 'overview';
-  var overviewEl = document.getElementById("deckOverview");
-  var mainEl = document.getElementById("mainContainer");
-  var headerEl = document.getElementById("headerBar");
-  if (mainEl) mainEl.style.display = "block";
-  if (headerEl) headerEl.style.display = "block";
-  if (overviewEl) overviewEl.style.display = "block";
-}
-
 function populateOptionsForm() {
   if (!SCHED_CONFIG) return;
   var el = function(id) { return document.getElementById(id); };
@@ -2456,9 +2286,9 @@ function readOptionsForm() {
 function saveOptions() {
   readOptionsForm();
   saveSchedConfig();
-  showToast("Options saved", 1500);
   log("Options saved: " + JSON.stringify(SCHED_CONFIG));
-  hideOptionsScreen();
+  showToast("Options saved", 800);
+  setTimeout(function() { window.location.href = 'index.html'; }, 800);
 }
 
 function applyPreset(name) {
