@@ -212,6 +212,30 @@
         statusEl.textContent = 'VOCABULARY not loaded.'; return;
       }
 
+      // Merge incremental card saves into d before writing back.
+      // Mirrors loadDeck()'s merge logic so that timesViewed, reviewState, etc.
+      // are current even when saveDeck() hasn't been called in this session.
+      // Cards with id:null fall back to the index-based 'card_N' key used by saveCard().
+      try {
+        var cardSaves = JSON.parse(localStorage.getItem('kanki_deck_cards') || '{}');
+        for (var ci = 0; ci < d.cards.length; ci++) {
+          var cc = d.cards[ci];
+          var saveKey = cc.id || ('card_' + ci);
+          var cs = cardSaves[saveKey];
+          if (!cs) continue;
+          if (!cc.id && cs.id) cc.id = cs.id; // restore ID assigned by saveCard()
+          cc.difficulty  = cs.difficulty;
+          cc.nextReview  = cs.nextReview;
+          cc.history     = cs.history;
+          cc.starred     = cs.starred;
+          cc.timesViewed = cs.timesViewed;
+          cc.lastViewed  = cs.lastViewed;
+          cc.suspended   = cs.suspended;
+          cc.tags        = cs.tags;
+          if (cs.reviewState) cc.reviewState = cs.reviewState;
+        }
+      } catch (e) {}
+
       // Build CID-keyed map and ordered list from VOCABULARY
       var byCid  = {};
       var byIndex = [];
