@@ -341,6 +341,290 @@ function setupImageErrorHandling() {
   }, true);
 }
 
+// ─── Fullscreen Image Viewer ─────────────────────────────────────────────────
+// Safari 5 compatible: no object-fit, no CSS transitions.
+// Uses gesture events (iOS) for pinch-to-zoom, touch events for drag-to-pan.
+
+var imageViewerOpen = false;
+
+// Viewer state
+var ivScale = 1;              // current zoom scale
+var ivPanX = 0;               // current pan offset X
+var ivPanY = 0;               // current pan offset Y
+var ivImgNaturalW = 0;        // image natural width
+var ivImgNaturalH = 0;        // image natural height
+var ivViewW = 0;              // viewport width
+var ivViewH = 0;              // viewport height
+
+// Pan tracking
+var ivIsPanning = false;
+var ivPanStartX = 0;
+var ivPanStartY = 0;
+var ivPanOffsetStartX = 0;
+var ivPanOffsetStartY = 0;
+
+// Double-tap detection
+var ivLastTapTime = 0;
+var ivSingleTapTimer = null;
+
+// Pinch gesture state
+var ivGestureStartScale = 1;
+var ivGestureStartCenterX = 0;
+var ivGestureStartCenterY = 0;
+
+function setupImageTapHandling() {
+  var cardContainer = document.getElementById("cardContainer");
+  if (!cardContainer) return;
+
+  cardContainer.addEventListener('click', function(e) {
+    if (e.target && e.target.tagName === 'IMG') {
+      e.preventDefault();
+      e.stopPropagation();
+      openImageViewer(e.target.src);
+    }
+  });
+}
+
+function openImageViewer(src) {
+  if (imageViewerOpen) return;
+  imageViewerOpen = true;
+  ivScale = 1;
+  ivPanX = 0;
+  ivPanY = 0;
+
+  var overlay = document.getElementById("imageViewerOverlay");
+  var img = document.getElementById("imageViewerImg");
+
+  // Reset styles
+  img.style.width = '';
+  img.style.height = '';
+  img.style.position = '';
+  img.style.left = '';
+  img.style.top = '';
+  img.style.marginLeft = '';
+  img.style.marginTop = '';
+  img.style.webkitTransform = '';
+  img.style.transform = '';
+
+  // Get viewport dimensions
+  ivViewW = window.innerWidth || document.documentElement.clientWidth;
+  ivViewH = window.innerHeight || document.documentElement.clientHeight;
+
+  // Load image to get natural dimensions, then size it
+  var tempImg = new Image();
+  tempImg.onload = function() {
+    ivImgNaturalW = tempImg.naturalWidth || tempImg.width;
+    ivImgNaturalH = tempImg.naturalHeight || tempImg.height;
+
+    // Calculate fit-to-screen dimensions (leave 5% padding)
+    var padW = ivViewW * 0.95;
+    var padH = ivViewH * 0.95;
+    var ratio = Math.min(padW / ivImgNaturalW, padH / ivImgNaturalH);
+    var displayW = Math.round(ivImgNaturalW * ratio);
+    var displayH = Math.round(ivImgNaturalH * ratio);
+
+    img.src = src;
+    img.style.width = displayW + 'px';
+    img.style.height = displayH + 'px';
+    img.style.position = 'absolute';
+    img.style.left = '0';
+    img.style.top = '0';
+
+    // Center the image using marginLeft/marginTop (not transform)
+    // so that transform is only used for pan/zoom deltas
+    ivPanX = Math.round((ivViewW - displayW) / 2);
+    ivPanY = Math.round((ivViewH - displayH) / 2);
+    img.style.marginLeft = ivPanX + 'px';
+    img.style.marginTop = ivPanY + 'px';
+
+    overlay.style.display = 'block';
+  };
+  tempImg.onerror = function() {
+    // Fallback: just set src and let browser size it
+    img.src = src;
+    overlay.style.display = 'block';
+  };
+  tempImg.src = src;
+}
+
+function closeImageViewer() {
+  if (!imageViewerOpen) return;
+  imageViewerOpen = false;
+
+  var overlay = document.getElementById("imageViewerOverlay");
+  overlay.style.display = 'none';
+
+  // E-ink ghosting fix: flash white, then black, then restore
+  flashDisplayForEInkRefresh();
+}
+
+function applyImageViewerTransform() {
+  var img = document.getElementById("imageViewerImg");
+  if (!img) return;
+
+  var displayW = ivImgNaturalW;  // fit-to-screen display width
+  var displayH = ivImgNaturalH;  // fit-to-screen display height
+
+  var scaledW = displayW * ivScale;
+  var scaledH = displayH * ivScale;
+
+  // Clamp pan so image doesn't drift completely off-screen
+  var maxPanX = Math.max(0, (scaledW - ivViewW) / 2);
+  var maxPanY = Math.max(0, (scaledH - ivViewH) / 2);
+  ivPanX = Math.max(-maxPanX, Math.min(maxPanX, ivPanX));
+  ivPanY = Math.max(-maxPanY, Math.min(maxPanY, ivPanY));
+
+  // At scale ~1, use marginLeft/marginTop for centering (no transform)
+  // At scale != 1, use transform-origin at image center so scale() grows
+  // from the center, then translate() for pan offset.
+  if (ivScale <= 1.0001 && ivScale >= 0.9999) {
+    img.style.webkitTransform = '';
+    img.style.transform = '';
+    img.style.marginLeft = ivPanX + 'px';
+    img.style.marginTop = ivPanY + 'px';
+  } else {
+    // transform-origin at the image center so scale() grows from center
+    img.style.webkitTransformOrigin = (displayW / 2) + 'px ' + (displayH / 2) + 'px';
+    img.style.transformOrigin = (displayW / 2) + 'px ' + (displayH / 2) + 'px';
+    // translate by the centering offset, then scale from center
+    img.style.webkitTransform = 'translate(' + ivPanX + 'px, ' + ivPanY + 'px) scale(' + ivScale + ')';
+    img.style.transform = 'translate(' + ivPanX + 'px, ' + ivPanY + 'px) scale(' + ivScale + ')';
+    img.style.marginLeft = '0';
+    img.style.marginTop = '0';
+  }
+}
+
+// Handle taps and gestures on the fullscreen viewer overlay
+function setupImageViewerTapHandling() {
+  var overlay = document.getElementById("imageViewerOverlay");
+  if (!overlay) return;
+
+  // ── Double-tap to close (on overlay background) ──────────────────────
+  overlay.addEventListener('touchend', function(e) {
+    if (e.touches.length > 0) return; // Still have fingers down, not a tap
+
+    var now = Date.now();
+    var changedTouch = e.changedTouches[0];
+    var target = changedTouch.target;
+
+    // Check if this is a double-tap
+    if (now - ivLastTapTime < 350) {
+      clearTimeout(ivSingleTapTimer);
+      ivLastTapTime = 0;
+      closeImageViewer();
+      e.preventDefault();
+      return;
+    }
+
+    // Single tap on background (not on the image) — close
+    if (target === overlay || target.id === "imageViewerContent") {
+      clearTimeout(ivSingleTapTimer);
+      ivSingleTapTimer = setTimeout(function() {
+        if (imageViewerOpen) {
+          closeImageViewer();
+        }
+      }, 350);
+    }
+
+    ivLastTapTime = now;
+  }, false);
+
+  // ── Pinch-to-zoom via iOS gesture events ─────────────────────────────
+  overlay.addEventListener('gesturestart', function(e) {
+    if (!imageViewerOpen) return;
+    e.preventDefault();
+    ivGestureStartScale = ivScale;
+
+    // Calculate gesture center relative to the image
+    var rect = document.getElementById("imageViewerImg").getBoundingClientRect();
+    ivGestureStartCenterX = e.clientX - rect.left;
+    ivGestureStartCenterY = e.clientY - rect.top;
+  }, false);
+
+  overlay.addEventListener('gesturechange', function(e) {
+    if (!imageViewerOpen) return;
+    e.preventDefault();
+
+    // Scale between 0.5x and 5x
+    var newScale = Math.max(0.5, Math.min(5, ivGestureStartScale * e.scale));
+
+    // Adjust pan so the gesture center stays stable
+    var scaleRatio = newScale / ivScale;
+    ivPanX = ivPanX * scaleRatio;
+    ivPanY = ivPanY * scaleRatio;
+    ivScale = newScale;
+
+    applyImageViewerTransform();
+  }, false);
+
+  overlay.addEventListener('gestureend', function(e) {
+    if (!imageViewerOpen) return;
+    e.preventDefault();
+  }, false);
+
+  // ── Drag-to-pan (one finger, when zoomed in) ─────────────────────────
+  overlay.addEventListener('touchstart', function(e) {
+    if (!imageViewerOpen) return;
+    if (e.touches.length !== 1) return;
+    if (ivScale <= 1) return; // Only pan when zoomed in
+
+    var touch = e.touches[0];
+    ivIsPanning = true;
+    ivPanStartX = touch.clientX;
+    ivPanStartY = touch.clientY;
+    ivPanOffsetStartX = ivPanX;
+    ivPanOffsetStartY = ivPanY;
+  }, false);
+
+  overlay.addEventListener('touchmove', function(e) {
+    if (!imageViewerOpen) return;
+    if (!ivIsPanning) return;
+    if (e.touches.length !== 1) {
+      ivIsPanning = false;
+      return;
+    }
+
+    e.preventDefault();
+    var touch = e.touches[0];
+    ivPanX = ivPanOffsetStartX + (touch.clientX - ivPanStartX);
+    ivPanY = ivPanOffsetStartY + (touch.clientY - ivPanStartY);
+    applyImageViewerTransform();
+  }, false);
+
+  overlay.addEventListener('touchend', function(e) {
+    if (ivIsPanning && e.touches.length === 0) {
+      ivIsPanning = false;
+    }
+  }, false);
+
+  // Also handle click for non-touch devices (testing in desktop browser)
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay || e.target.id === "imageViewerContent") {
+      closeImageViewer();
+    }
+  });
+}
+
+// E-ink ghosting fix: flash white then black to force full particle reset
+function flashDisplayForEInkRefresh() {
+  var flash = document.getElementById("displayFlash");
+  if (!flash) return;
+
+  // Phase 1: Flash white
+  flash.style.display = "block";
+  flash.style.backgroundColor = "#ffffff";
+
+  setTimeout(function() {
+    // Phase 2: Flash black
+    flash.style.backgroundColor = "#000000";
+
+    setTimeout(function() {
+      // Phase 3: Remove flash, content restored underneath
+      flash.style.display = "none";
+    }, 100);
+  }, 100);
+}
+
 // Pass-through: images load via direct <img src=""> tags; the global error
 // handler (setupImageErrorHandling) shows a placeholder for any that fail.
 function resolveImagePathsInHTML(html) {
@@ -1223,6 +1507,9 @@ function onPageLoad() {
   initializeCardKeyboardNavigation();
 
   setupImageErrorHandling();
+
+  setupImageTapHandling();
+  setupImageViewerTapHandling();
 
   log("Application initialized");
 }

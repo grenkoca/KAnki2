@@ -1309,3 +1309,42 @@ h1 {
   border-bottom: 1px solid #eee;
   padding-bottom: 2px;
 }
+
+/* ── Fullscreen Image Viewer ─────────────────────────────────────────── */
+
+.image-viewer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #000000;
+  z-index: 500;
+  overflow: hidden;
+}
+
+.image-viewer-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.image-viewer-content img {
+  display: block;
+  /* Size and position set by JS in openImageViewer() */
+}
+
+/* ── E-Ink Display Flash ─────────────────────────────────────────────── */
+
+.display-flash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 9999;
+  pointer-events: none;
+}
